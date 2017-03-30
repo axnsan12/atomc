@@ -141,7 +141,7 @@ class NamedRuleReference(Predicate):
         return parser.get_named_rule(self.rule_name)._on_consume_attempt(parser)
 
 
-maybe = OptionalPredicate
+opt = OptionalPredicate
 seq = SequencePredicate
 alt = AlternativePredicate
 many = RepeatingPredicate
@@ -169,7 +169,25 @@ class SyntaxParser(object):
         else:
             raise ValueError("Invalid position")
 
+
+    def peek(self) -> Optional[Token]:
+        """
+        Return the next token, or None if there are no more tokens
+        :return: next token
+        """
+        if self._pos < len(self.tokens):
+            return self.tokens[self._pos]
+
+        return None
+
     def consume(self, token_type: TokenType) -> Optional[Token]:
+        """
+        Try to consume a token of the given type. The parser position is advanced
+            if and only if the token is consumed (matched).
+
+        :param token_type: the type of the target token.
+        :return: the consumed token, or None
+        """
         if self._pos < len(self.tokens) and self.tokens[self._pos].code == token_type:
             self._pos += 1
             return self.tokens[self._pos - 1]
@@ -214,20 +232,33 @@ def main():
                 # INT | DOUBLE | CHAR | (STRUCT ID)
                 parser.add_named_rule('typeBase', alt(tk('INT'), tk('CHAR'), tk('DOUBLE'), seq(tk('STRUCT'), tk('ID'))))
 
+                # typeBase arrayDecl?
+                parser.add_named_rule('typeName', seq(ref('typeBase'), opt(ref('arrayDecl'))))
+
                 # LBRACKET expr? RBRACKET
                 parser.add_named_rule('arrayDecl', seq(tk('LPAR'), tk('RPAR')))  # TODO: add `expr?`
 
-                # typeBase ID arrayDecl?
-                parser.add_named_rule('funcArg', seq(ref('typeBase'), tk('ID'), maybe(ref('arrayDecl'))))
+                # STRUCT ID LACC declVar* RACC SEMICOLON
+                parser.add_named_rule('declStruct', seq(
+                    tk('STRUCT'), tk('ID'), tk('LACC'), many(ref('declVar')), tk('RACC'), tk('SEMICOLON')
+                ))
 
+                # typeBase ID arrayDecl? ( COMMA ID arrayDecl? )* SEMICOLON
+                parser.add_named_rule('declVar', seq(
+                    ref('typeBase'), tk('ID'), opt(ref('arrayDecl')),
+                    many(seq(tk('COMMA'), tk('ID'), opt(ref('arrayDecl')))), tk ('SEMICOLON')
+                ))
+
+                # typeBase ID arrayDecl?
+                parser.add_named_rule('funcArg', seq(ref('typeBase'), tk('ID'), opt(ref('arrayDecl'))))
 
                 parser.add_rule('declFunc', seq(
                     # (typeBase MUL? | VOID) ID
-                    alt(seq(ref('typeBase'), maybe(tk('MUL'))), tk('VOID')), tk('ID'),
+                    alt(seq(ref('typeBase'), opt(tk('MUL'))), tk('VOID')), tk('ID'),
                     # LPAR (funcArg (COMMA funcArg)*)? RPAR
-                    tk('LPAR'), maybe(seq(ref('funcArg'), many(seq(tk('COMMA'), ref('funcArg'))))), tk('RPAR'))
+                    tk('LPAR'), opt(seq(ref('funcArg'), many(seq(tk('COMMA'), ref('funcArg'))))), tk('RPAR')
                     # TODO: add stmCompund
-                )
+                ))
 
                 for rule_name, tokens in parser.get_next_match():
                     print(rule_name)

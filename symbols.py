@@ -1,6 +1,6 @@
 from enum import Enum
 from abc import ABC
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 
 class TypeName(Enum):
@@ -10,44 +10,56 @@ class TypeName(Enum):
     TB_REAL = 4,
     TB_VOID = 5,
     TB_STRUCT = 6,
+    TB_FUNC = 7
 
 class SymbolType(ABC):
     def __init__(self, base: TypeName):
         self.type_base = base
 
 
-class PrimitiveType(SymbolType):
+class BasicType(SymbolType):
     def __init__(self, base: TypeName):
         super().__init__(base)
 
 
-class StructType(SymbolType):
-    def __init__(self):
+class PrimitiveType(BasicType):
+    def __init__(self, base: TypeName):
+        super().__init__(base)
+
+
+class StructType(BasicType):
+    def __init__(self, struct_name: str):
         super().__init__(TypeName.TB_STRUCT)
+        self.struct_name = struct_name
 
 
 class ArrayType(SymbolType):
-    def __init__(self, elem_type: PrimitiveType, size: int=None):
+    def __init__(self, elem_type: BasicType, size: int=None):
         super().__init__(elem_type.type_base)
         self.size = size
 
 
 class Symbol(object):
-    def __init__(self, name: str, symbol_type: SymbolType):
+    def __init__(self, name: str):
         self.name = name
-        self.type = symbol_type
+
+
+class VariableSymbol(Symbol):
+    def __init__(self, name: str, var_type: SymbolType):
+        super().__init__(name)
+        self.var_type = var_type
 
 
 class FunctionSymbol(Symbol):
-    def __init__(self, name: str, symbol_type: SymbolType, ret_type: SymbolType, args: List[Symbol]):
-        super().__init__(name, symbol_type)
+    def __init__(self, name: str, ret_type: SymbolType, args: List[Symbol]):
+        super().__init__(name)
         self.ret_type = ret_type
         self.args = args
 
 
 class StructSymbol(Symbol):
-    def __init__(self, name: str, symbol_type: SymbolType, members: List[Symbol]):
-        super().__init__(name, symbol_type)
+    def __init__(self, name: str, members: List[Symbol]):
+        super().__init__(name)
         self.members = members
 
 
