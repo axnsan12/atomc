@@ -1,7 +1,7 @@
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Optional, Tuple
 
 from lexer import TokenType, Token
-from parser import SyntaxParser
+from collections import deque
 import symbols
 
 
@@ -19,14 +19,13 @@ class LFTCSyntaxError(Exception):
         return "%s(%r)" % (self.__class__, self.__dict__)
 
 
-class ConsumeAttemptManager(object):
+class SyntaxParserAttempt(object):
     class _FailedAttempt(Exception):
         pass
 
     def __init__(self, parser: 'SyntaxParser'):
         self.parser = parser
-        self._saved_pos = -1
-        self._success = False
+        self._saved_pos = deque()
 
 
     def consume(self, token_type: TokenType, syntax_error_message: str = None) -> Token:
@@ -72,6 +71,8 @@ class ConsumeAttemptManager(object):
 
         return token
 
+    def checkpoint(self):
+        return self
 
     def fail(self):
         """
@@ -81,17 +82,19 @@ class ConsumeAttemptManager(object):
         :return: never returns
         :raise _FailedAttempt: always
         """
-        self._success = False
         raise self._FailedAttempt()
 
     def __enter__(self):
-        self._saved_pos = self.parser.tell()
-        self._success = True
+        self._saved_pos.append(self.parser.tell())
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if not self._success:
-            self.parser.seek(self._saved_pos)
+        if len(self._saved_pos) == 0:
+            raise RuntimeError("Context manager exited more times than it was entered.")
+
+        if exc_type is not None:
+            # rewind
+            self.parser.seek(self._saved_pos.popleft())
 
         if exc_type is self._FailedAttempt:
             # supress exception
@@ -99,36 +102,45 @@ class ConsumeAttemptManager(object):
 
 
 class ASTNode(object):
-    @classmethod
-    def parse(cls, parser: SyntaxParser):
-        pass
+    # @classmethod
+    # def parse(cls, parser: SyntaxParser):
+    #     pass
+    pass
 
 
-def parse_base_type(parser: SyntaxParser) -> symbols.BasicType:
+def parse_base_type(attempt: SyntaxParserAttempt) -> symbols.BasicType:
     # typeBase: INT | DOUBLE | CHAR | STRUCT ID ;
-    with ConsumeAttemptManager(parser) as attempt:
-        type_token = attempt.consume_one_of([TokenType.INT, TokenType.DOUBLE, TokenType.CHAR, TokenType.STRUCT])
+    type_token = attempt.consume_one_of([TokenType.INT, TokenType.DOUBLE, TokenType.CHAR, TokenType.STRUCT])
 
-        if type_token.code == TokenType.STRUCT:
-            struct_name = attempt.consume(TokenType.ID, "missing struct name in variable declaration")
-            return symbols.StructType(struct_name.value)
-        elif type_token.code == TokenType.INT:
-            return symbols.PrimitiveType(symbols.TypeName.TB_INT)
-        elif type_token.code == TokenType.DOUBLE:
-            return symbols.PrimitiveType(symbols.TypeName.TB_REAL)
-        elif type_token.code == TokenType.CHAR:
-            return symbols.PrimitiveType(symbols.TypeName.TB_CHAR)
+    if type_token.code == TokenType.STRUCT:
+        struct_name = attempt.consume(TokenType.ID, "missing struct name in variable declaration")
+        return symbols.StructType(struct_name.value)
+    elif type_token.code == TokenType.INT:
+        return symbols.PrimitiveType(symbols.TypeName.TB_INT)
+    elif type_token.code == TokenType.DOUBLE:
+        return symbols.PrimitiveType(symbols.TypeName.TB_REAL)
+    elif type_token.code == TokenType.CHAR:
+        return symbols.PrimitiveType(symbols.TypeName.TB_CHAR)
 
 
-class TypeName(ASTNode):
-    @classmethod
-    def parse(cls, parser: SyntaxParser):
-        # typeName: typeBase arrayDecl? ;
-        pass
+def parse_array_specifier(attempt: SyntaxParserAttempt) -> Optional['Expression']:
+    # arrayDecl: LBRACKET expr? RBRACKET ;
+    attempt.consume(TokenType.LBRACKET)
+
+    # PyCharm is dumb and does not recognise that the with block can swallow exceptions
+    # noinspection PyUnusedLocal
+    size_expr = None
+    with attempt.checkpoint():
+        size_expr = Expression.try_parse(attempt)
+
+    attempt.consume(TokenType.RBRACKET)
+    return size_expr
 
 
 class Expression(ASTNode):
-    pass
+    @classmethod
+    def try_parse(cls, attempt: SyntaxParserAttempt) -> Optional['Expression']:
+        return Expression()
 
 
 class UnaryExpression(Expression):
@@ -150,26 +162,24 @@ class DeclarationNode(ASTNode):
 
 class StructDeclarationNode(DeclarationNode):
     @classmethod
-    def parse(cls, parser: SyntaxParser):
+    def parse(cls, parser: 'SyntaxParser'):
         # declStruct: STRUCT ID LACC declVar* RACC SEMICOLON ;
-        with ConsumeAttemptManager(parser) as attempt:
+        with SyntaxParserAttempt(parser) as attempt:
             begin = attempt.consume(TokenType.STRUCT)
             struct_name = attempt.consume(TokenType.ID, "missing struct name in declaration")
             attempt.consume(TokenType.LACC, "missing opening accolade for struct declaration")
 
             members = []
-            member = VariableDeclarationNode.parse(parser)
+            member = MultipleVariableDeclarationNode.try_parse(attempt)
             while member is not None:
                 members.append(member)
-                member = VariableDeclarationNode.parse(parser)
+                member = MultipleVariableDeclarationNode.try_parse(attempt)
 
             attempt.consume(TokenType.RACC, "missing closing accolade for struct declaration")
             attempt.consume(TokenType.SEMICOLON, "missing semicolon after struct declaration")
             return StructDeclarationNode(begin.line, struct_name.value, members)
 
-        return None
-
-    def __init__(self, lineno: int, struct_name: str, member_declarations: Sequence[MultipleVariableDeclarationNode]):
+    def __init__(self, lineno: int, struct_name: str, member_declarations: Sequence['MultipleVariableDeclarationNode']):
         super().__init__(lineno)
         self.struct_name = struct_name
         self.member_declarations = member_declarations
@@ -177,37 +187,50 @@ class StructDeclarationNode(DeclarationNode):
 
 class MultipleVariableDeclarationNode(DeclarationNode):
     @classmethod
-    def parse(cls, parser: SyntaxParser):
+    def try_parse(cls, attempt: SyntaxParserAttempt) -> Optional['MultipleVariableDeclarationNode']:
         # declVar:  typeBase ID arrayDecl? ( COMMA ID arrayDecl? )* SEMICOLON ;
-        with ConsumeAttemptManager(parser) as attempt:
-            base_type = parse_base_type(parser)
-            variable_name = attempt.consume(TokenType.ID, "missing variable name in declaration")
+        base_type = parse_base_type(attempt)
+        declarations = []
 
+        variable_name = attempt.consume(TokenType.ID, "missing variable name in declaration")
+
+        while variable_name is not None:
+            variable_name = None
+            with attempt.checkpoint():
+                attempt.consume(TokenType.COMMA)
+                variable_name = attempt.consume(TokenType.ID, "missing variable name in declaration")
+
+                # PyCharm is dumb and does not recognise that the with block can swallow exceptions
+                # noinspection PyUnusedLocal
+                is_array, arr_size_expr = False, None
+                with attempt.checkpoint():
+                    arr_size_expr = parse_array_specifier(attempt)
+                    is_array = True
+
+        declarations.append(SingleVariableDeclarationNode(-1, base_type, variable_name.value, is_array, arr_size_expr))
         pass
 
-    def __init__(self, lineno: int, declarations: Sequence[SingleVariableDeclarationNode]):
+    def __init__(self, lineno: int, declarations: Sequence['SingleVariableDeclarationNode']):
         super().__init__(lineno)
         self.declarations = declarations
 
 
 class SingleVariableDeclarationNode(DeclarationNode):
-    @classmethod
-    def parse(cls, parser: SyntaxParser):
-        # declVar:  typeBase ID arrayDecl? ( COMMA ID arrayDecl? )* SEMICOLON ;
-        with ConsumeAttemptManager(parser) as attempt:
-            base_type = parse_base_type(parser)
-            variable_name = attempt.consume(TokenType.ID, "missing variable name in declaration")
+    # @classmethod
+    # def try_parse(cls, attempt: SyntaxParserAttempt) -> Optional['SingleVariableDeclarationNode']:
+    #     # declVar:  typeBase ID arrayDecl? ( COMMA ID arrayDecl? )* SEMICOLON ;
+    #     base_type = parse_base_type(attempt)
+    #     variable_name = attempt.consume(TokenType.ID, "missing variable name in declaration")
+    #
+    #     pass
 
-        pass
-
-    def __init__(self, lineno: int, variable_name: str, is_array: bool, array_size_expr: Expression):
+    def __init__(self, lineno: int, base_type: symbols.BasicType, variable_name: str, is_array: bool, array_size_expr: Expression):
         super().__init__(lineno)
 
 
 class ArrayDeclarationNode(DeclarationNode):
     @classmethod
-    def parse(cls, parser: SyntaxParser):
-        # arrayDecl: LBRACKET expr? RBRACKET ;
+    def parse(cls, parser: 'SyntaxParser'):
         pass
 
 
