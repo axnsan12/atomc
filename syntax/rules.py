@@ -304,7 +304,7 @@ syntax_rules['declVar'] = seq(
         tk('COMMA'),
         ref('declVarBase', capture_name='variables', syntax_error='expected variable declaration'),
     )),
-    tk('SEMICOLON'),
+    tk('SEMICOLON', syntax_error='variable declaration list must end with semicolon'),
     ast_node_generator=generators.multi_variable_declaration
 )
 
@@ -315,12 +315,11 @@ syntax_rules['declStruct'] = seq(
     tk('LACC'),
     many(ref('declVar', capture_name='members'), optional=True),
     tk('RACC', syntax_error='struct declaration without closing accolade'),
-    tk('SEMICOLON', syntax_error='semicolon expected'),
+    tk('SEMICOLON', syntax_error='semicolon expected after structure declaration'),
     ast_node_generator=generators.struct_declaration
 )
 
 # declFunc: ( typeBase MUL? | VOID ) ID LPAR ( funcArg ( COMMA funcArg )* )? RPAR stmCompound
-
 syntax_rules['declFunc'] = seq(
     alt(seq(ref('typeBase', capture_name='return_type'), opt(tk('MUL', capture_name='is_array'))), tk('VOID', capture_name='return_type')),
     tk('ID', capture_name='name', syntax_error='missing name in function declaration'),
@@ -334,7 +333,7 @@ syntax_rules['declFunc'] = seq(
         )
     )),
     tk('RPAR', syntax_error='argument list missing close parenthesis'),
-    ref('stmCompound', capture_name='function_body'),
+    ref('stmCompound', capture_name='function_body', syntax_error='missing function body'),
     ast_node_generator=generators.function_declaration
 )
 
@@ -343,9 +342,8 @@ root_rule = seq(
     many(alt(
         ref('declStruct', capture_name='unit'),
         ref('declFunc', capture_name='unit'),
-        ref('declVar', capture_name='unit'),
-        ref('expr', capture_name='unit')
+        ref('declVar', capture_name='unit')
     ), optional=True),
-    tk('END'),
+    tk('END', syntax_error='expected variable, function or structure declaration'),
     ast_node_generator=generators.capture_passthrough('unit')
 )

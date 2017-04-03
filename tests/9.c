@@ -3,7 +3,7 @@ struct Pt{
 	double z;
 	};
 
-struct Pt		points[20/4+5];
+struct Pt points[20/4+5];
 
 int		count()
 {

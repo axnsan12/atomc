@@ -86,18 +86,6 @@ def variable_or_function_call(captures: parser.predicate_captures_t):
         return [tree.VariableAccessNode(symbol_name_token.line, symbol_name_token.value)]
 
 
-def struct_member_access(captures: parser.predicate_captures_t):
-    struct = _get_one(captures, 'struct')  # type: tree.ExpressionNode
-    member_name = _get_one(captures, 'member_name').value
-    return [tree.StructMemberAccessNode(struct.lineno, struct, member_name)]
-
-
-def array_item_access(captures: parser.predicate_captures_t):
-    array = _get_one(captures, 'array')  # type: tree.ExpressionNode
-    array_index_expr = _get_one(captures, 'array_index_expr')  # type: tree.ExpressionNode
-    return [tree.ArrayItemAccessNode(array.lineno, array, array_index_expr)]
-
-
 def postfix_expression(captures: parser.predicate_captures_t):
     expr = _get_one(captures, 'expr')
     postfixes = _get_list_opt(captures, 'postfixes')

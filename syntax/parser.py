@@ -1,12 +1,8 @@
-import json
-import os
-
 import collections
-
 import itertools
-from typing import Optional, List, Tuple, Dict, Sequence, Union, Set, Callable, Any
+from typing import Optional, List, Tuple, Dict, Sequence, Union, Callable, Any
 from syntax import tree
-from lexer import Token, TokenType, get_tokens
+from lexer import Token, TokenType
 from abc import ABC, abstractmethod
 
 
@@ -29,6 +25,7 @@ predicate_captures_t = Dict[str, List[Union[Token, tree.ASTNode]]]
 ast_node_generator_t = Callable[[predicate_captures_t], List[tree.ASTNode]]
 class Predicate(ABC):
     tabs = ''
+    __debug = False
 
     def __init__(self, capture_name: str, ast_node_generator: ast_node_generator_t, syntax_error: str):
         self._capture_name = capture_name
@@ -45,7 +42,8 @@ class Predicate(ABC):
         return self.syntax_error
 
     def try_consume(self, parser: 'SyntaxParser', parent_captures: predicate_captures_t) -> Tuple[bool, List[Token], List[tree.ASTNode]]:
-        print(f"{Predicate.tabs}{self} enter")
+        if Predicate.__debug:
+            print(f"{Predicate.tabs}{self} enter")
         Predicate.tabs += '\t'
         ast_node_generator = self.get_node_generator()
         capture_name = self.get_capture_name()
@@ -68,7 +66,8 @@ class Predicate(ABC):
                 bubble_up_captures = child_captures.items()
 
                 if ast_node_generator is not None:
-                    print("generator - " + capture_name + " " + real_str(child_captures))
+                    if Predicate.__debug:
+                        print("generator - " + capture_name + " " + real_str(child_captures))
                     nodes = ast_node_generator(child_captures)
                     # if this predicate generates a node, it must not pollute its parent's captures with its own captures
                     # instead, it will remember captured tokens/nodes for itself, then generate the nodes
@@ -80,7 +79,8 @@ class Predicate(ABC):
                     bubble_up_captures = itertools.chain([(capture_name, self_captures)], bubble_up_captures)
 
                 for name, captures in bubble_up_captures:
-                    print(f"Capture bubble up: {name} {real_str(captures)}")
+                    if Predicate.__debug:
+                        print(f"Capture bubble up: {name} {real_str(captures)}")
                     new_captures = parent_captures[name] if name in parent_captures else []
                     new_captures.extend(captures)
                     parent_captures[name] = new_captures
@@ -92,7 +92,8 @@ class Predicate(ABC):
                 attempt.fail()
 
         Predicate.tabs = Predicate.tabs[:-1]
-        print(f"{Predicate.tabs}{self} exit ({'===MATCHED=== ' + ', '.join(map(real_str, tokens)) if tokens is not None else 'not matched'}) CAPTURED {real_str(parent_captures)}")
+        if Predicate.__debug:
+            print(f"{Predicate.tabs}{self} exit ({'===MATCHED=== ' + ', '.join(map(real_str, tokens)) if tokens is not None else 'not matched'}) CAPTURED {real_str(parent_captures)}")
         return tokens is not None, tokens or [], nodes
 
     class ConsumeAttemptManager(object):
