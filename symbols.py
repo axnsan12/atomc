@@ -1,25 +1,45 @@
 from enum import Enum
 from abc import ABC
-from typing import List, Optional, Sequence
+from typing import List, Optional
+from lexer import Token, TokenType
 
 
 class TypeName(Enum):
-    TB_INT = 1,
-    TB_STRING = 2,
-    TB_CHAR = 3,
-    TB_REAL = 4,
-    TB_VOID = 5,
-    TB_STRUCT = 6,
-    TB_FUNC = 7
+    TB_INT = 'int'
+    TB_CHAR = 'char'
+    TB_REAL = 'double'
+    TB_VOID = 'void'
+    TB_STRUCT = 'struct'
+    TB_FUNC = 'func'
 
 class SymbolType(ABC):
     def __init__(self, base: TypeName):
         self.type_base = base
 
+    def __str__(self):
+        return self.type_base.value
+
 
 class BasicType(SymbolType):
     def __init__(self, base: TypeName):
         super().__init__(base)
+        if type(self) == BasicType and base != TypeName.TB_VOID:
+            raise AssertionError("Use either PrimitveType or StructType")
+
+    @staticmethod
+    def from_tokens(tokens: List[Token]) -> 'BasicType':
+        if len(tokens) == 1 and tokens[0].code == TokenType.INT:
+            return PrimitiveType(TypeName.TB_INT)
+        if len(tokens) == 1 and tokens[0].code == TokenType.CHAR:
+            return PrimitiveType(TypeName.TB_CHAR)
+        if len(tokens) == 1 and tokens[0].code == TokenType.DOUBLE:
+            return PrimitiveType(TypeName.TB_REAL)
+        if len(tokens) == 1 and tokens[0].code == TokenType.VOID:
+            return BasicType(TypeName.TB_VOID)
+        if len(tokens) == 2 and tokens[0].code == TokenType.STRUCT and tokens[1].code == TokenType.ID:
+            return StructType(tokens[1].value)
+
+        raise ValueError("Invalid tokens for BasicType")
 
 
 class PrimitiveType(BasicType):
@@ -32,11 +52,17 @@ class StructType(BasicType):
         super().__init__(TypeName.TB_STRUCT)
         self.struct_name = struct_name
 
+    def __str__(self):
+        return f"struct {self.struct_name}"
 
 class ArrayType(SymbolType):
     def __init__(self, elem_type: BasicType, size: int=None):
         super().__init__(elem_type.type_base)
         self.size = size
+        self.elem_type = elem_type
+
+    def __str__(self):
+        return f"{self.elem_type}[{self.size if self.size is not None else ''}]"
 
 
 class Symbol(object):

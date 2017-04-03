@@ -296,7 +296,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
     tokens = []
     tokenizer = Tokenizer(lambda tok: tokens.append(tok),
                           lambda state, partial, err: print("Error in state %d at line %d (buffer is %r): %s"
-                                                            % (state, line_number, partial, err)),
+                                                            % (state, line_number + 1, partial, err)),
                           debug=False)
 
     keywords = {'break', 'char', 'double', 'else', 'for', 'if', 'int', 'return', 'struct', 'void', 'while'}
@@ -308,7 +308,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
 
     tokenizer.add_finalizer(21, lambda state, buffer: Token(
         TokenType[buffer.upper()] if buffer.lower() in keywords else TokenType.ID,
-        buffer if buffer.lower() not in keywords else None, line_number))
+        buffer if buffer.lower() not in keywords else None, line_number + 1))
 
     # SPACE
     tokenizer.add_transition(0, 0, ' \t\r\n', consume=True)
@@ -323,7 +323,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
     tokenizer.add_transition(17, 51, '\'', consume=True)
     tokenizer.add_transition(17, Error("Character literal with multiple elements"), None, consume=False)
 
-    tokenizer.add_finalizer(51, lambda state, buffer: Token(TokenType.CT_CHAR, unescape(buffer[1:-1]), line_number))
+    tokenizer.add_finalizer(51, lambda state, buffer: Token(TokenType.CT_CHAR, unescape(buffer[1:-1]), line_number + 1))
 
     # CT_STRING
     tokenizer.add_transition(0, 15, '"', consume=True)
@@ -333,7 +333,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
     tokenizer.add_transition(18, 15, "abfnrtv'?\"\\0", consume=True)
     tokenizer.add_transition(18, Error("Invalid escape sequence"), None, consume=False)
 
-    tokenizer.add_finalizer(19, lambda state, buffer: Token(TokenType.CT_STRING, unescape(buffer[1:-1]), line_number))
+    tokenizer.add_finalizer(19, lambda state, buffer: Token(TokenType.CT_STRING, unescape(buffer[1:-1]), line_number + 1))
 
 
     # CT_INT
@@ -354,7 +354,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
     tokenizer.add_transition(4, 6, None, consume=False)
     tokenizer.add_transition(5, 6, None, consume=False)
 
-    tokenizer.add_finalizer(6, lambda state, buffer: Token(TokenType.CT_INT, parse_int(buffer), line_number))
+    tokenizer.add_finalizer(6, lambda state, buffer: Token(TokenType.CT_INT, parse_int(buffer), line_number + 1))
 
     # CT_REAL
     tokenizer.add_transition(1, 7, '89', consume=True)
@@ -385,7 +385,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
     tokenizer.add_transition(9, 13, None, consume=False)
     tokenizer.add_transition(12, 13, None, consume=False)
 
-    tokenizer.add_finalizer(13, lambda state, buffer: Token(TokenType.CT_REAL, parse_real(buffer), line_number))
+    tokenizer.add_finalizer(13, lambda state, buffer: Token(TokenType.CT_REAL, parse_real(buffer), line_number + 1))
 
     # SINGLE CHARACTERS
     singles = [
@@ -405,7 +405,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
 
     for sid, char, code in singles:
         tokenizer.add_transition(0, sid, char, consume=True)
-        tokenizer.add_finalizer(sid, lambda state, buffer, _code=code: Token(TokenType[_code], None, line_number))
+        tokenizer.add_finalizer(sid, lambda state, buffer, _code=code: Token(TokenType[_code], None, line_number + 1))
 
     # DOUBLE REPEATS
     doubles = [
@@ -417,7 +417,7 @@ def get_tokens(fobj: 'file object') -> List[Token]:
         tokenizer.add_transition(0, s1, char, consume=True)
         tokenizer.add_transition(s1, s2, char, consume=True)
         tokenizer.add_transition(s1, Error("Single %r encountered. Expected second %r" % (char, char)), None, False)
-        tokenizer.add_finalizer(s2, lambda state, buffer, _code=code: Token(TokenType[_code], None, line_number))
+        tokenizer.add_finalizer(s2, lambda state, buffer, _code=code: Token(TokenType[_code], None, line_number + 1))
 
     # DOUBLE CHARACTER FORKS
     forks = [
@@ -432,8 +432,8 @@ def get_tokens(fobj: 'file object') -> List[Token]:
         tokenizer.add_transition(intermediary, s1, None, consume=False)
         tokenizer.add_transition(intermediary, s2, char2, consume=True)
 
-        tokenizer.add_finalizer(s1, lambda state, buffer, _code=code1: Token(TokenType[_code], None, line_number))
-        tokenizer.add_finalizer(s2, lambda state, buffer, _code=code2: Token(TokenType[_code], None, line_number))
+        tokenizer.add_finalizer(s1, lambda state, buffer, _code=code1: Token(TokenType[_code], None, line_number + 1))
+        tokenizer.add_finalizer(s2, lambda state, buffer, _code=code2: Token(TokenType[_code], None, line_number + 1))
 
     # COMMENTS
     tokenizer.add_transition(0, 33, '/', consume=True)
@@ -453,10 +453,10 @@ def get_tokens(fobj: 'file object') -> List[Token]:
 
     # actual division
     tokenizer.add_transition(33, 50, None, consume=False)
-    tokenizer.add_finalizer(50, lambda state, buffer: Token(TokenType.DIV, None, line_number))
+    tokenizer.add_finalizer(50, lambda state, buffer: Token(TokenType.DIV, None, line_number + 1))
 
     tokenizer.add_transition(0, -1, '\0', consume=True)
-    tokenizer.add_finalizer(-1, lambda state, buffer: Token(TokenType.END, None, line_number))
+    tokenizer.add_finalizer(-1, lambda state, buffer: Token(TokenType.END, None, line_number + 1))
 
     try:
         for line_number, line in enumerate(fobj):
@@ -470,21 +470,3 @@ def get_tokens(fobj: 'file object') -> List[Token]:
         raise
 
     return tokens
-
-
-def main():
-    for test in os.listdir('tests'):
-        print('=================== Analyzing file %s ==================' % test)
-
-        with open(os.path.join('tests', test), 'rt') as f:
-            try:
-                tokens = get_tokens(f)
-                for ln, ltokens in itertools.groupby(tokens, lambda t: t.line):
-                    print("Line %d: " % ln + ' '.join(map(str, ltokens)))
-            except ValueError as e:
-                print(e)
-
-        print('=========================================================')
-
-if __name__ == '__main__':
-    exit(main())

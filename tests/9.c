@@ -1,5 +1,6 @@
 struct Pt{
-	int x,y;
+	int x,y[];
+	double z;
 	};
 
 struct Pt		points[20/4+5];
