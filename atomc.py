@@ -32,10 +32,11 @@ def main():
                 else:
                     print("SYNTAX PARSE FAILED")
 
-                global_symbol_table = symbols.SymbolTable('global', symbols.StorageType.GLOBAL, None)
+                builtin_symbol_table = symbols.SymbolTable('builtin', symbols.StorageType.BUILTIN, None)
                 for f in builtin.all_builtins:
-                    global_symbol_table.add_symbol(f)
+                    builtin_symbol_table.add_symbol(f)
 
+                global_symbol_table = symbols.SymbolTable('global', symbols.StorageType.GLOBAL, builtin_symbol_table)
                 unit_node.bind_symbol_table(global_symbol_table)
                 unit_node.validate()
 

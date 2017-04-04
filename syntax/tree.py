@@ -1,6 +1,6 @@
 import operator
 import collections
-from typing import Sequence, Union, Tuple
+from typing import Sequence, Union
 from abc import ABCMeta, abstractmethod
 import symbols
 import errors
@@ -60,12 +60,11 @@ class ASTNode(object, metaclass=ABCMeta):
             if isinstance(value, collections.Iterable):
                 children_valid.extend([e.validate() for e in value if isinstance(e, ASTNode) and e is not None])
 
-        self_valid = True # self._on_validate()
-        return self_valid and all(children_valid)
+        return all(children_valid) and self._on_validate()
 
-    # @abstractmethod
-    # def _on_validate(self):
-    #     raise NotImplementedError("Abstract method")
+    @abstractmethod
+    def _on_validate(self) -> bool:
+        raise NotImplementedError("Abstract method")
 
     @abstractmethod
     def _on_bind_symbol_table(self):
@@ -124,6 +123,9 @@ class ConstantLiteralNode(ExpressionNode):
     def _on_bind_symbol_table(self):
         pass
 
+    def _on_validate(self) -> bool:
+        return True
+
 
 class VariableAccessNode(ExpressionNode):
     def __init__(self, lineno: int, symbol_name: str):
@@ -145,6 +147,11 @@ class VariableAccessNode(ExpressionNode):
     def _on_bind_symbol_table(self):
         pass
 
+    def _on_validate(self) -> bool:
+        if self.symbol_table.get_symbol(self.symbol_name) is None:
+            raise errors.AtomCDomainError(f"undefined variable {self.symbol_name}", self.lineno)
+
+        return True
 
 class FunctionCallExpressionNode(ExpressionNode):
     def __init__(self, lineno: int, function_name: str, args: Sequence[ExpressionNode]):
@@ -168,6 +175,22 @@ class FunctionCallExpressionNode(ExpressionNode):
     def _on_bind_symbol_table(self):
         for arg in self.args:
             arg.bind_symbol_table(self.symbol_table)
+
+    def _on_validate(self) -> bool:
+        function_symbol = self.symbol_table.get_symbol(self.function_name)
+        if function_symbol is None:
+            raise errors.AtomCDomainError(f"undefined function {self.function_name}", self.lineno)
+        if not isinstance(function_symbol, symbols.FunctionSymbol):
+            raise errors.AtomCDomainError(f"{self.function_name} is not a function", self.lineno)
+
+        if len(self.args) != len(function_symbol.args):
+            raise errors.AtomCTypeError(f"not enough arguments in call to function {self.function_name}", self.lineno)
+
+        for narg, (arg_value, arg_def) in enumerate(zip(self.args, function_symbol.args)):
+            if arg_value.type() != arg_def.type:
+                raise errors.AtomCTypeError(f"in call to {self.function_name} - argument {narg} type mismatch; "
+                                            f"expected {arg_def.type}, got {arg_value.type}", self.lineno)
+        return True
 
 
 class ArrayItemAccessNode(ExpressionNode):
@@ -193,6 +216,15 @@ class ArrayItemAccessNode(ExpressionNode):
     def _on_bind_symbol_table(self):
         self.array_variable.bind_symbol_table(self.symbol_table)
         self.index_expression.bind_symbol_table(self.symbol_table)
+
+    def _on_validate(self) -> bool:
+        array_type = self.array_variable.type()
+        if not isinstance(array_type, symbols.ArrayType):
+            raise errors.AtomCTypeError("Subscription operator [] applied to non-array expression", self.lineno)
+
+        if self.index_expression.type() != symbols.TYPE_INT:
+            raise errors.AtomCTypeError("Array index expression must be of integer type", self.lineno)
+        return True
 
 
 class StructMemberAccessNode(ExpressionNode):
@@ -259,6 +291,11 @@ class CastExpressionNode(ExpressionNode):
         if self.array_size_expr:
             self.array_size_expr.bind_symbol_table(self.symbol_table)
         self.cast_expr.bind_symbol_table(self.symbol_table)
+
+    def _on_validate(self):
+        _resolve_type(self.base_type, self.is_array, self.array_size_expr)
+        # TODO: validate cast
+        return True
 
 
 class UnaryExpressionNode(ExpressionNode, metaclass=ABCMeta):
@@ -469,7 +506,7 @@ class StructDeclarationNode(DeclarationNode):
         return [struct_symbol]
 
     def _on_bind_symbol_table(self):
-        member_symbol_table = symbols.SymbolTable(f'struct {self.struct_name}', symbols.StorageType.DECLARATION, self.symbol_table)
+        member_symbol_table = symbols.SymbolTable(f'struct-{self.struct_name}', symbols.StorageType.DECLARATION, self.symbol_table)
         for member in self.member_declarations:
             member.bind_symbol_table(member_symbol_table)
 
@@ -556,7 +593,7 @@ class FunctionDeclarationNode(DeclarationNode):
 
     def _on_bind_symbol_table(self):
         _bind_struct_type(self.return_type, self.symbol_table, self.lineno)
-        function_symbol_table = symbols.SymbolTable(f'function {self.name} locals', symbols.StorageType.LOCAL, self.symbol_table)
+        function_symbol_table = symbols.SymbolTable(f'function-{self.name}-locals', symbols.StorageType.LOCAL, self.symbol_table)
         for arg in self.arguments:
             arg.bind_symbol_table(function_symbol_table)
 
@@ -671,7 +708,7 @@ class CompoundStatementNode(StatementNode):
     def _on_bind_symbol_table(self):
         inner_symbol_table = None
         if self.scope:
-            inner_symbol_table = symbols.SymbolTable('compound statement', symbols.StorageType.LOCAL, self.symbol_table)
+            inner_symbol_table = symbols.SymbolTable('compound-statement', symbols.StorageType.LOCAL, self.symbol_table)
         for instr in self.instructions:
             instr.bind_symbol_table(inner_symbol_table if self.scope else self.symbol_table)
 

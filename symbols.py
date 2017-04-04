@@ -169,6 +169,7 @@ class SymbolTable(object):
         self.symbols = {}
         if outer:
             outer._children.append(self)
+            self.scope_name = f"{outer.scope_name}.{scope_name}"
 
     def get_symbol(self, symbol_name) -> Optional[Symbol]:
         return self._get_symbol_this(symbol_name) or self._get_symbol_outer(symbol_name)
@@ -194,6 +195,6 @@ class SymbolTable(object):
 
     def __str__(self):
         tabs = "\t" * self._depth()
-        self_symbols = f"Symbol table `{self.scope_name}`: " + ', '.join(map(str, self.symbols.values()))
+        self_symbols = ', '.join(map(str, self.symbols.values())) if self.symbols else "<empty>"
         child_symbols = '\n'.join(map(str, self._children))
-        return tabs + self_symbols + ('\n' if child_symbols else '') + child_symbols
+        return tabs + f"Symbol table `{self.scope_name}`: " + self_symbols + ('\n' if child_symbols else '') + child_symbols
