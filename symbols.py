@@ -1,6 +1,8 @@
 from enum import Enum
 from abc import ABC
 from typing import List, Optional
+
+import errors
 from lexer import Token, TokenType
 
 
@@ -11,6 +13,15 @@ class TypeName(Enum):
     TB_VOID = 'void'
     TB_STRUCT = 'struct'
     TB_FUNC = 'func'
+
+
+class StorageType(Enum):
+    GLOBAL = 'global'
+    LOCAL = 'local'
+    ARG = 'arg'
+    DECLARATION = 'decl'
+    BUILTIN = 'builtin'
+
 
 class SymbolType(ABC):
     def __init__(self, base: TypeName):
@@ -41,6 +52,12 @@ class BasicType(SymbolType):
 
         raise ValueError("Invalid tokens for BasicType")
 
+    def __eq__(self, other: 'BasicType'):
+        return self.type_base == other.type_base
+
+    def __hash__(self):
+        return hash(self.type_base)
+
 
 class PrimitiveType(BasicType):
     def __init__(self, base: TypeName):
@@ -51,9 +68,20 @@ class StructType(BasicType):
     def __init__(self, struct_name: str):
         super().__init__(TypeName.TB_STRUCT)
         self.struct_name = struct_name
+        self.struct_symbol = None  # type: StructSymbol
 
     def __str__(self):
         return f"struct {self.struct_name}"
+
+    def __eq__(self, other: 'StructType'):
+        return self.type_base == other.type_base and self.struct_name == other.struct_name
+
+    def __hash__(self):
+        return hash((self.type_base, self.struct_name))
+
+    def set_symbol(self, symbol_table: 'SymbolTable'):
+        self.struct_symbol = symbol_table.get_symbol(self.struct_name)
+
 
 class ArrayType(SymbolType):
     def __init__(self, elem_type: BasicType, size: int=None):
@@ -64,36 +92,83 @@ class ArrayType(SymbolType):
     def __str__(self):
         return f"{self.elem_type}[{self.size if self.size is not None else ''}]"
 
+    def __eq__(self, other: 'ArrayType'):
+        return self.type_base == other.type_base and self.elem_type == other.elem_type and self.size == other.size
+
+    def __hash__(self):
+        return hash((self.type_base, self.elem_type, self.size))
+
+
+TYPE_VOID = BasicType(TypeName.TB_VOID)
+TYPE_INT = PrimitiveType(TypeName.TB_INT)
+TYPE_REAL = PrimitiveType(TypeName.TB_REAL)
+TYPE_CHAR = PrimitiveType(TypeName.TB_CHAR)
+
+
+def python_type(symbol_type: SymbolType):
+    if symbol_type == TYPE_INT:
+        return int
+    if symbol_type == TYPE_REAL:
+        return float
+    if symbol_type == TYPE_CHAR:
+        return str
+    if isinstance(symbol_type, ArrayType):
+        if symbol_type.elem_type == TYPE_CHAR:
+            return str
+
+    raise ValueError(f"{symbol_type} does not have a corresponding python type")
+
 
 class Symbol(object):
-    def __init__(self, name: str):
+    def __init__(self, name: str, symbol_type: SymbolType, storage: StorageType):
         self.name = name
+        self.type = symbol_type
+        self.storage = storage
+
+    def __str__(self):
+        return f"{{{self.storage.value}}} {self.type} {self.name}"
 
 
 class VariableSymbol(Symbol):
-    def __init__(self, name: str, var_type: SymbolType):
-        super().__init__(name)
-        self.var_type = var_type
+    def __init__(self, name: str, var_type: SymbolType, storage: StorageType):
+        super().__init__(name, var_type, storage)
 
 
 class FunctionSymbol(Symbol):
-    def __init__(self, name: str, ret_type: SymbolType, args: List[Symbol]):
-        super().__init__(name)
+    def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, *args: VariableSymbol):
+        super().__init__(name, ret_type, storage)
         self.ret_type = ret_type
         self.args = args
 
+    def __str__(self):
+        return f"{{{self.storage.value}}} {self.ret_type} {self.name}({', '.join(map(str, self.args))})"
+
 
 class StructSymbol(Symbol):
-    def __init__(self, name: str, members: List[Symbol]):
-        super().__init__(name)
+    def __init__(self, name: str, members: List[VariableSymbol], storage: StorageType):
+        super().__init__(name, StructType(name), storage)
         self.members = members
+
+    def get_member_symbol(self, member_name):
+        return next((mem for mem in self.members if mem.name == member_name), None)
+
+    def __str__(self):
+        return f"{{{self.storage.value}}} struct {self.name} {{ {'; '.join(map(str, self.members))} }}"
+
+class BuiltinSymbol(FunctionSymbol):
+    def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, *args: VariableSymbol):
+        super().__init__(name, ret_type, storage, *args)
 
 
 class SymbolTable(object):
-    def __init__(self, scope_name: str, outer: 'SymbolTable'=None):
+    def __init__(self, scope_name: str, storage: StorageType, outer: 'SymbolTable'=None):
         self.outer = outer
+        self._children = []  # type: List[SymbolTable]
         self.scope_name = scope_name
+        self.storage = storage
         self.symbols = {}
+        if outer:
+            outer._children.append(self)
 
     def get_symbol(self, symbol_name) -> Optional[Symbol]:
         return self._get_symbol_this(symbol_name) or self._get_symbol_outer(symbol_name)
@@ -107,6 +182,18 @@ class SymbolTable(object):
     def add_symbol(self, symbol: Symbol):
         existing = self._get_symbol_this(symbol.name)
         if existing:
-            raise ValueError("Attempt to redefine existing symbol {}".format(existing))
+            raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name))
 
         self.symbols[symbol.name] = symbol
+
+    def clear_self(self):
+        self.symbols = {}
+
+    def _depth(self):
+        return 0 if self.outer is None else 1 + self.outer._depth()
+
+    def __str__(self):
+        tabs = "\t" * self._depth()
+        self_symbols = f"Symbol table `{self.scope_name}`: " + ', '.join(map(str, self.symbols.values()))
+        child_symbols = '\n'.join(map(str, self._children))
+        return tabs + self_symbols + ('\n' if child_symbols else '') + child_symbols

@@ -340,10 +340,10 @@ syntax_rules['declFunc'] = seq(
 # unit: ( declStruct | declFunc | declVar )* END ;
 root_rule = seq(
     many(alt(
-        ref('declStruct', capture_name='unit'),
-        ref('declFunc', capture_name='unit'),
-        ref('declVar', capture_name='unit')
+        ref('declStruct', capture_name='declarations'),
+        ref('declFunc', capture_name='declarations'),
+        ref('declVar', capture_name='declarations')
     ), optional=True),
     tk('END', syntax_error='expected variable, function or structure declaration'),
-    ast_node_generator=generators.capture_passthrough('unit')
+    ast_node_generator=generators.compilation_unit
 )

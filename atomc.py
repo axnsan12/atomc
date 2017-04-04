@@ -1,8 +1,9 @@
 import os
 
 import itertools
-
+import builtin
 import lexer
+import symbols
 from syntax import parser, rules
 
 
@@ -11,9 +12,9 @@ def main():
         print('=================== Analyzing file %s ==================' % test)
 
         # test = '4.c'
-        with open(os.path.join('tests', test), 'rt') as f:
+        with open(os.path.join('tests', test), 'rt') as infile:
             try:
-                tokens = lexer.get_tokens(f)
+                tokens = lexer.get_tokens(infile)
                 for ln, ltokens in itertools.groupby(tokens, lambda t: t.line):
                     print("Line %d: " % ln + ' '.join(map(str, ltokens)))
 
@@ -24,13 +25,21 @@ def main():
 
                 syntax_parser.set_root_rule('unit', rules.root_rule)
 
-                matched, tokens, nodes = syntax_parser.get_syntax_tree()
-                if matched:
+                unit_node = syntax_parser.get_syntax_tree()
+                if unit_node is not None:
                     print("================== PARSED SYNTAX ================")
-                    print(' '.join(map(str, tokens)))
-                    print(' '.join(map(str, nodes)))
+                    print(unit_node)
                 else:
                     print("SYNTAX PARSE FAILED")
+
+                global_symbol_table = symbols.SymbolTable('global', symbols.StorageType.GLOBAL, None)
+                for f in builtin.all_builtins:
+                    global_symbol_table.add_symbol(f)
+
+                unit_node.bind_symbol_table(global_symbol_table)
+                unit_node.validate()
+
+                print(global_symbol_table)
 
             except ValueError as e:
                 print(e)

@@ -8,6 +8,8 @@ import os
 import string
 import itertools
 
+import errors
+
 
 class TokenType(Enum):
     ID = 1,
@@ -292,11 +294,14 @@ def unescape(s: str) -> str:
     return s.encode('utf8').decode('unicode_escape')
 
 
+def _raise_error(err, state, line_number, partial):
+    raise errors.AtomCLexicalError(err, state, line_number, partial)
+
+
 def get_tokens(fobj: 'file object') -> List[Token]:
     tokens = []
     tokenizer = Tokenizer(lambda tok: tokens.append(tok),
-                          lambda state, partial, err: print("Error in state %d at line %d (buffer is %r): %s"
-                                                            % (state, line_number + 1, partial, err)),
+                          lambda state, partial, err: _raise_error(err, state, line_number + 1, partial),
                           debug=False)
 
     keywords = {'break', 'char', 'double', 'else', 'for', 'if', 'int', 'return', 'struct', 'void', 'while'}

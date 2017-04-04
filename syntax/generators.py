@@ -129,42 +129,39 @@ def binary_expression_left_associative(captures: parser.predicate_captures_t):
         return operands
 
     operator_token = operator_tokens[0]
-    for op in operator_tokens[1:]:
-        if op.code != operator_token.code:
-            raise ValueError("Non-homogenous operator list")
+    expr = operands[0]
 
     if len(operands) != len(operator_tokens) + 1:
         raise ValueError("Not enough operands")
 
-    if operator_token.code == TokenType.OR:
-        node_type = tree.LogicalOrExpressionNode
-    elif operator_token.code == TokenType.AND:
-        node_type = tree.LogicalAndExpressionNode
-    elif operator_token.code == TokenType.LESS:
-        node_type = tree.LessThanExpressionNode
-    elif operator_token.code == TokenType.LESSEQ:
-        node_type = tree.LessEqualExpressionNode
-    elif operator_token.code == TokenType.GREATER:
-        node_type = tree.GreaterThanExpressionNode
-    elif operator_token.code == TokenType.GREATEREQ:
-        node_type = tree.GreaterEqualExpressionNode
-    elif operator_token.code == TokenType.EQUAL:
-        node_type = tree.EqualExpressionNode
-    elif operator_token.code == TokenType.NOTEQ:
-        node_type = tree.NotEqualExpressionNode
-    elif operator_token.code == TokenType.ADD:
-        node_type = tree.AdditionExpressionNode
-    elif operator_token.code == TokenType.SUB:
-        node_type = tree.SubtractionExpressionNode
-    elif operator_token.code == TokenType.MUL:
-        node_type = tree.MultiplicationExpressionNode
-    elif operator_token.code == TokenType.DIV:
-        node_type = tree.DivisionExpressionNode
-    else:
-        raise ValueError(f"Unknown binary operator {operator_token}")
+    for operator, operand in zip((op.code for op in operator_tokens), operands[1:]):
+        if operator == TokenType.OR:
+            node_type = tree.LogicalOrExpressionNode
+        elif operator == TokenType.AND:
+            node_type = tree.LogicalAndExpressionNode
+        elif operator == TokenType.LESS:
+            node_type = tree.LessThanExpressionNode
+        elif operator == TokenType.LESSEQ:
+            node_type = tree.LessEqualExpressionNode
+        elif operator == TokenType.GREATER:
+            node_type = tree.GreaterThanExpressionNode
+        elif operator == TokenType.GREATEREQ:
+            node_type = tree.GreaterEqualExpressionNode
+        elif operator == TokenType.EQUAL:
+            node_type = tree.EqualExpressionNode
+        elif operator == TokenType.NOTEQ:
+            node_type = tree.NotEqualExpressionNode
+        elif operator == TokenType.ADD:
+            node_type = tree.AdditionExpressionNode
+        elif operator == TokenType.SUB:
+            node_type = tree.SubtractionExpressionNode
+        elif operator == TokenType.MUL:
+            node_type = tree.MultiplicationExpressionNode
+        elif operator == TokenType.DIV:
+            node_type = tree.DivisionExpressionNode
+        else:
+            raise ValueError(f"Unknown binary operator {operator_token}")
 
-    expr = node_type(operands[0].lineno, operands[0], operands[1])
-    for operand in operands[2:]:
         expr = node_type(operand.lineno, expr, operand)
 
     return [expr]
@@ -226,6 +223,11 @@ def while_statement(captures: parser.predicate_captures_t):
     condition = _get_one(captures, 'condition')  # type: tree.ExpressionNode
     body = _get_one(captures, 'body')  # type: tree.StatementNode
     return [tree.WhileStatementNode(while_token.line, condition, body)]
+
+
+def compilation_unit(captures: parser.predicate_captures_t):
+    declaration_nodes = _get_list_opt(captures, 'declarations')
+    return [tree.UnitNode(0, declaration_nodes)]
 
 
 def capture_passthrough(capture_name: str):

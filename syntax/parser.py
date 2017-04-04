@@ -1,24 +1,11 @@
 import collections
 import itertools
 from typing import Optional, List, Tuple, Dict, Sequence, Union, Callable, Any
+
+import errors
 from syntax import tree
 from lexer import Token, TokenType
 from abc import ABC, abstractmethod
-
-
-class AtomCSyntaxError(Exception):
-    def __init__(self, error_message: str, lineno: int):
-        self.error_message = error_message
-        self.lineno = lineno
-
-    def __str__(self):
-        if self.lineno > 0:
-            return f"Syntax error at line {self.lineno}: {self.error_message}"
-        else:
-            return f"Unexpected end of file - {self.error_message}"
-
-    def __repr__(self):
-        return "%s(%r)" % (self.__class__, self.__dict__)
 
 
 predicate_captures_t = Dict[str, List[Union[Token, tree.ASTNode]]]
@@ -88,7 +75,7 @@ class Predicate(ABC):
             else:
                 if syntax_error is not None:
                     lineno = parser.peek().line if parser.peek() else -1
-                    raise AtomCSyntaxError(syntax_error, lineno)
+                    raise errors.AtomCSyntaxError(syntax_error, lineno)
                 attempt.fail()
 
         Predicate.tabs = Predicate.tabs[:-1]
@@ -332,13 +319,13 @@ class SyntaxParser(object):
     def get_named_rule(self, rule_name) -> Predicate:
         return self.rules[rule_name]
 
-    def get_syntax_tree(self):
+    def get_syntax_tree(self) -> Optional[tree.UnitNode]:
         captures = {}
         matched, tokens, nodes = self.root_rule.try_consume(self, captures)
-        if matched:
-            print(f"Syntax parser captures: {real_str(captures)}")
+        if not matched:
+            return None
 
-        return matched, tokens, nodes
+        return captures['root'][0]
 
     def set_root_rule(self, rule_name: str, pred: Predicate):
         self.add_named_rule(rule_name, pred)
