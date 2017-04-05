@@ -4,35 +4,7 @@ from typing import Sequence, Union
 from abc import ABCMeta, abstractmethod
 import symbols
 import errors
-
-
-def _bind_struct_type(base_type: symbols.BasicType, symbol_table: symbols.SymbolTable=None, lineno: int=None):
-    if isinstance(base_type, symbols.StructType):
-        struct_name = base_type.struct_name
-        base_type.set_symbol(symbol_table)
-        if base_type.struct_symbol is None:
-            raise errors.AtomCDomainError(f"Undefined symbol {struct_name}", lineno)
-        if not isinstance(base_type.struct_symbol, symbols.StructSymbol):
-            raise errors.AtomCDomainError(f"{struct_name} is not a struct", lineno)
-
-
-def _resolve_type(base_type: symbols.BasicType, is_array: bool, array_size_expr: 'ExpressionNode'=None):
-    real_type = base_type
-    if is_array:
-        array_size = None
-        if array_size_expr:
-            if not array_size_expr.is_const():
-                raise errors.AtomCTypeError("array size must be a constant expression", array_size_expr.lineno)
-            if array_size_expr.type() != symbols.TYPE_INT:
-                raise errors.AtomCTypeError("array size must be an integer expression", array_size_expr.lineno)
-                
-            array_size = array_size_expr.calculate_const()
-            if array_size <= 0:
-                raise errors.AtomCTypeError("array size must be strictly positive", array_size_expr.lineno)
-        
-        real_type = symbols.ArrayType(base_type, array_size)
-
-    return real_type
+import typecheck
 
 
 class ASTNode(object, metaclass=ABCMeta):
@@ -187,9 +159,9 @@ class FunctionCallExpressionNode(ExpressionNode):
             raise errors.AtomCTypeError(f"not enough arguments in call to function {self.function_name}", self.lineno)
 
         for narg, (arg_value, arg_def) in enumerate(zip(self.args, function_symbol.args)):
-            if arg_value.type() != arg_def.type:
-                raise errors.AtomCTypeError(f"in call to {self.function_name} - argument {narg} type mismatch; "
-                                            f"expected {arg_def.type}, got {arg_value.type}", self.lineno)
+            implicit_cast_error = typecheck.check_cast_implicit(arg_value.type(), arg_def.type)
+            if implicit_cast_error:
+                raise errors.AtomCTypeError(f"in call to {self.function_name} - argument {narg} type mismatch; {implicit_cast_error}", self.lineno)
         return True
 
 
@@ -222,7 +194,7 @@ class ArrayItemAccessNode(ExpressionNode):
         if not isinstance(array_type, symbols.ArrayType):
             raise errors.AtomCTypeError("Subscription operator [] applied to non-array expression", self.lineno)
 
-        if self.index_expression.type() != symbols.TYPE_INT:
+        if typecheck.check_cast_implicit(self.index_expression.type(), symbols.TYPE_INT):
             raise errors.AtomCTypeError("Array index expression must be of integer type", self.lineno)
         return True
 
@@ -284,17 +256,18 @@ class CastExpressionNode(ExpressionNode):
         return self.cast_expr.is_const()
 
     def type(self) -> symbols.SymbolType:
-        return _resolve_type(self.base_type, self.is_array, self.array_size_expr)
+        return typecheck.resolve_type(self.base_type, self.is_array, self.array_size_expr)
 
     def _on_bind_symbol_table(self):
-        _bind_struct_type(self.base_type, self.symbol_table, self.lineno)
+        typecheck.bind_struct_type(self.base_type, self.symbol_table, self.lineno)
         if self.array_size_expr:
             self.array_size_expr.bind_symbol_table(self.symbol_table)
         self.cast_expr.bind_symbol_table(self.symbol_table)
 
     def _on_validate(self):
-        _resolve_type(self.base_type, self.is_array, self.array_size_expr)
-        # TODO: validate cast
+        explicit_cast_error = typecheck.check_cast_explicit(self.cast_expr.type(), self.type())
+        if explicit_cast_error:
+            raise errors.AtomCTypeError(explicit_cast_error, self.lineno)
         return True
 
 
@@ -325,6 +298,12 @@ class LogicalNegationExpressionNode(UnaryExpressionNode):
     def type(self) -> symbols.SymbolType:
         return symbols.TYPE_INT
 
+    def _on_validate(self):
+        operand_type = self.operand.type()
+        if not typecheck.is_numeric(operand_type) and not isinstance(operand_type, symbols.ArrayType):
+            raise errors.AtomCTypeError("logical operators can only be applied to numeric and array types", self.lineno)
+
+        return True
 
 class ArithmeticNegationExpressionNode(UnaryExpressionNode):
     def __init__(self, lineno: int, operand: ExpressionNode):
@@ -338,6 +317,13 @@ class ArithmeticNegationExpressionNode(UnaryExpressionNode):
 
     def type(self) -> symbols.SymbolType:
         return self.operand.type()
+
+    def _on_validate(self):
+        operand_type = self.operand.type()
+        if not typecheck.is_numeric(operand_type):
+            raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric types", self.lineno)
+
+        return True
 
 
 class BinaryExpressionNode(ExpressionNode, metaclass=ABCMeta):
@@ -373,6 +359,12 @@ class AssignmentExpressionNode(BinaryExpressionNode):
     def type(self) -> symbols.SymbolType:
         return self.operand_right.type()
 
+    def _on_validate(self):
+        implicit_cast_error = typecheck.check_cast_implicit(self.operand_right.type(), self.operand_left.type())
+        if implicit_cast_error:
+            raise errors.AtomCTypeError(f"invalid assignment - {implicit_cast_error}", self.lineno)
+        return True
+
 
 class BinaryLogicalExpressionNode(BinaryExpressionNode):
     def __init__(self, lineno: int, operand_left: ExpressionNode, operand_right: ExpressionNode, logical_op, op_string: str):
@@ -386,6 +378,16 @@ class BinaryLogicalExpressionNode(BinaryExpressionNode):
 
     def type(self) -> symbols.SymbolType:
         return symbols.TYPE_INT
+
+    def _on_validate(self):
+        left_type = self.operand_left.type()
+        right_type = self.operand_left.type()
+        if not typecheck.is_numeric(left_type) and not isinstance(left_type, symbols.ArrayType):
+            raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric and array types", self.lineno)
+        if not typecheck.is_numeric(right_type) and not isinstance(right_type, symbols.ArrayType):
+            raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric and array types", self.lineno)
+
+        return True
 
 
 class LogicalOrExpressionNode(BinaryLogicalExpressionNode):
@@ -451,6 +453,14 @@ class BinaryArithmeticExpressionNode(BinaryExpressionNode):
         else:
             raise errors.AtomCTypeError("Arithmetic expression only support numeric operands", self.lineno)
 
+    def _on_validate(self):
+        left_type = self.operand_left.type()
+        right_type = self.operand_left.type()
+        if not typecheck.is_numeric(left_type) or not typecheck.is_numeric(right_type):
+            raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric types", self.lineno)
+
+        return True
+
 
 class AdditionExpressionNode(BinaryArithmeticExpressionNode):
     def __init__(self, lineno: int, operand_left: ExpressionNode, operand_right: ExpressionNode):
@@ -510,7 +520,7 @@ class StructDeclarationNode(DeclarationNode):
         for member in self.member_declarations:
             member.bind_symbol_table(member_symbol_table)
 
-        self.symbol_table.add_symbol(self.get_symbol())
+        self.symbol_table.add_symbol(self.get_symbol(), self.lineno)
 
 
 class VariableDeclarationNode(DeclarationNode):
@@ -526,18 +536,18 @@ class VariableDeclarationNode(DeclarationNode):
     def get_symbols(self) -> Sequence[symbols.VariableSymbol]:
         var_symbols = []
         for decl in self.declarations:
-            decl_type = _resolve_type(self.base_type, decl.is_array, decl.array_size_expr)
+            decl_type = typecheck.resolve_type(self.base_type, decl.is_array, decl.array_size_expr)
             var_symbols.append(symbols.VariableSymbol(decl.name, decl_type, self.symbol_table.storage))
 
         return var_symbols
 
     def _on_bind_symbol_table(self):
-        _bind_struct_type(self.base_type, self.symbol_table, self.lineno)
+        typecheck.bind_struct_type(self.base_type, self.symbol_table, self.lineno)
         for decl in self.declarations:
             decl.bind_symbol_table(self.symbol_table)
 
         for symbol in self.get_symbols():
-            self.symbol_table.add_symbol(symbol)
+            self.symbol_table.add_symbol(symbol, self.lineno)
 
 
 class PartialVariableDeclarationNode(DeclarationNode):
@@ -586,20 +596,20 @@ class FunctionDeclarationNode(DeclarationNode):
         return f"{self.return_type}{'*' if self.is_array else ''} {self.name}({', '.join(map(str, self.arguments))}) {self.function_body}"
 
     def get_symbols(self) -> Sequence[symbols.FunctionSymbol]:
-        ret_type = _resolve_type(self.return_type, self.is_array)
+        ret_type = typecheck.resolve_type(self.return_type, self.is_array)
         arg_symbols = [arg.get_symbol() for arg in self.arguments]
         function_symbol = symbols.FunctionSymbol(self.name, ret_type, symbols.StorageType.DECLARATION, *arg_symbols)
         return [function_symbol]
 
     def _on_bind_symbol_table(self):
-        _bind_struct_type(self.return_type, self.symbol_table, self.lineno)
+        typecheck.bind_struct_type(self.return_type, self.symbol_table, self.lineno)
         function_symbol_table = symbols.SymbolTable(f'function-{self.name}-locals', symbols.StorageType.LOCAL, self.symbol_table)
         for arg in self.arguments:
             arg.bind_symbol_table(function_symbol_table)
 
         self.function_body.disable_scoping()
         self.function_body.bind_symbol_table(function_symbol_table)
-        self.symbol_table.add_symbol(self.get_symbol())
+        self.symbol_table.add_symbol(self.get_symbol(), self.lineno)
 
 
 class StatementNode(ASTNode, metaclass=ABCMeta):

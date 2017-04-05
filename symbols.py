@@ -180,10 +180,10 @@ class SymbolTable(object):
     def _get_symbol_this(self, symbol_name) -> Optional[Symbol]:
         return self.symbols.get(symbol_name, None)
 
-    def add_symbol(self, symbol: Symbol):
+    def add_symbol(self, symbol: Symbol, lineno: int):
         existing = self._get_symbol_this(symbol.name)
         if existing:
-            raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name))
+            raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name), lineno)
 
         self.symbols[symbol.name] = symbol
 

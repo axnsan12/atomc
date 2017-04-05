@@ -1,5 +1,5 @@
 void main() {
     int tmp; //prima linie
     tmp = 10;
-    printf("tmp = %d", tmp);
+    // printf("tmp = %d", tmp);
 }

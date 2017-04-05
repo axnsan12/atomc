@@ -169,7 +169,7 @@ syntax_rules['exprAdd'] = alt(
     seq(
         ref('exprAdd', capture_name='_removed'),
         alt(tk('ADD'), tk('SUB'), capture_name='operator'),
-        ref('exprMul', capture_name='operands')
+        ref('exprMul', capture_name='operands', syntax_error="missing right operand")
     ),
     ref('exprMul', capture_name='operands'),
     ast_node_generator=generators.binary_expression_left_associative
@@ -299,7 +299,7 @@ syntax_rules['stm'] = alt(
 # declVar: typeBase  ( COMMA ID arrayDecl? )* SEMICOLON
 syntax_rules['declVar'] = seq(
     ref('typeBase', capture_name='base_type'),
-    ref('declVarBase', capture_name='variables'),
+    ref('declVarBase', capture_name='variables', syntax_error='missing variable declaration name'),
     many(seq(
         tk('COMMA'),
         ref('declVarBase', capture_name='variables', syntax_error='expected variable declaration'),
