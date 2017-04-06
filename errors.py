@@ -54,3 +54,14 @@ class AtomCDomainError(AtomCError):
 
     def __repr__(self):
         return "%s(%r)" % (self.__class__, self.__dict__)
+
+class AtomCRuntimeError(AtomCError):
+    def __init__(self, error_message: str, lineno: int):
+        self.error_message = error_message
+        self.lineno = lineno
+
+    def __str__(self):
+        return f"Runtime caused by code at line {self.lineno}: {self.error_message}"
+
+    def __repr__(self):
+        return "%s(%r)" % (self.__class__, self.__dict__)
