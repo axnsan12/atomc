@@ -23,4 +23,6 @@ int main() {
         oo2 = !a != b == c >= 3 && 4 < d >= e || f;
         a = b = c;
     }
+
+    return 0;
 }

@@ -15,13 +15,13 @@ def _array(elem_type: symbols.BasicType, size: int=None):
     return symbols.ArrayType(elem_type, size)
 
 def _arg_array(name: str, elem_type: symbols.BasicType, size: int=None):
-    return symbols.VariableSymbol(name, _array(elem_type, size), symbols.StorageType.ARG)
+    return symbols.VariableSymbol(name, _array(elem_type, size), symbols.StorageType.ARG, -1)
 
 def _arg_basic(name: str, arg_type: symbols.BasicType):
-    return symbols.VariableSymbol(name, arg_type, symbols.StorageType.ARG)
+    return symbols.VariableSymbol(name, arg_type, symbols.StorageType.ARG, -1)
 
 def _builtin(name: str, return_type: symbols.SymbolType, *args: symbols.VariableSymbol):
-    return symbols.FunctionSymbol(name, return_type, symbols.StorageType.BUILTIN, *args)
+    return symbols.FunctionSymbol(name, return_type, symbols.StorageType.BUILTIN, -1, *args)
 
 
 put_s = _builtin('put_s', symbols.TYPE_VOID, _arg_array('s', symbols.TYPE_CHAR))

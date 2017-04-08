@@ -93,7 +93,7 @@ class ArrayType(SymbolType):
         return f"{self.elem_type}[{self.size if self.size is not None else ''}]"
 
     def __eq__(self, other: 'ArrayType'):
-        return self.type_base == other.type_base and self.elem_type == other.elem_type and self.size == other.size
+        return isinstance(other, ArrayType) and self.elem_type == other.elem_type and self.size == other.size
 
     def __hash__(self):
         return hash((self.type_base, self.elem_type, self.size))
@@ -120,23 +120,24 @@ def python_type(symbol_type: SymbolType):
 
 
 class Symbol(object):
-    def __init__(self, name: str, symbol_type: SymbolType, storage: StorageType):
+    def __init__(self, name: str, symbol_type: SymbolType, storage: StorageType, lineno: int):
         self.name = name
         self.type = symbol_type
         self.storage = storage
+        self.lineno = lineno
 
     def __str__(self):
         return f"{{{self.storage.value}}} {self.type} {self.name}"
 
 
 class VariableSymbol(Symbol):
-    def __init__(self, name: str, var_type: SymbolType, storage: StorageType):
-        super().__init__(name, var_type, storage)
+    def __init__(self, name: str, var_type: SymbolType, storage: StorageType, lineno: int):
+        super().__init__(name, var_type, storage, lineno)
 
 
 class FunctionSymbol(Symbol):
-    def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, *args: VariableSymbol):
-        super().__init__(name, ret_type, storage)
+    def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, lineno: int, *args: VariableSymbol):
+        super().__init__(name, ret_type, storage, lineno)
         self.ret_type = ret_type
         self.args = args
 
@@ -145,8 +146,8 @@ class FunctionSymbol(Symbol):
 
 
 class StructSymbol(Symbol):
-    def __init__(self, name: str, members: List[VariableSymbol], storage: StorageType):
-        super().__init__(name, StructType(name), storage)
+    def __init__(self, name: str, members: List[VariableSymbol], storage: StorageType, lineno: int):
+        super().__init__(name, StructType(name), storage, lineno)
         self.members = members
 
     def get_member_symbol(self, member_name):
@@ -156,8 +157,8 @@ class StructSymbol(Symbol):
         return f"{{{self.storage.value}}} struct {self.name} {{ {'; '.join(map(str, self.members))} }}"
 
 class BuiltinSymbol(FunctionSymbol):
-    def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, *args: VariableSymbol):
-        super().__init__(name, ret_type, storage, *args)
+    def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, lineno: int, *args: VariableSymbol):
+        super().__init__(name, ret_type, storage, lineno, *args)
 
 
 class SymbolTable(object):
@@ -180,10 +181,10 @@ class SymbolTable(object):
     def _get_symbol_this(self, symbol_name) -> Optional[Symbol]:
         return self.symbols.get(symbol_name, None)
 
-    def add_symbol(self, symbol: Symbol, lineno: int):
+    def add_symbol(self, symbol: Symbol):
         existing = self._get_symbol_this(symbol.name)
         if existing:
-            raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name), lineno)
+            raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name), symbol.lineno)
 
         self.symbols[symbol.name] = symbol
 

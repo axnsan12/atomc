@@ -1,6 +1,6 @@
 import operator
 import collections
-from typing import Sequence, Union
+from typing import Sequence, Union, Set
 from abc import ABCMeta, abstractmethod
 import symbols
 import errors
@@ -11,8 +11,12 @@ class ASTNode(object, metaclass=ABCMeta):
     def __init__(self, lineno: int):
         self.lineno = lineno
         self.symbol_table = None  # type: symbols.SymbolTable
+        self.current_function = None  # type: FunctionDeclarationNode
+        self.current_loop = None  # type: Union[ForStatementNode, WhileStatementNode]
         if type(self) == ASTNode:
             raise AssertionError("Do not instantiate ASTNode directly. Use an appropriate subclass.")
+
+        self._validation_lock = False
 
     def __repr__(self):
         return "%s(%r)" % (self.__class__, self.__dict__)
@@ -21,17 +25,48 @@ class ASTNode(object, metaclass=ABCMeta):
         self.symbol_table = symbol_table
         self._on_bind_symbol_table()
 
+    def _set_current_loop(self, current_loop: Union['ForStatementNode', 'WhileStatementNode']):
+        self.current_loop = current_loop
+
+    def _set_current_function(self, current_function: 'FunctionDeclarationNode'):
+        self.current_function = current_function
+
+    @property
+    def _direct_children(self):
+        for name, value in vars(self).items():
+            if value is None or value is self:
+                continue
+
+            if isinstance(value, ASTNode):
+                yield value
+            if isinstance(value, collections.Iterable):
+                yield from [e for e in value if isinstance(e, ASTNode) and e is not None]
+
+    @property
+    def _children(self):
+        yield from self.__children_recursive(self, set())
+
+    @staticmethod
+    def __children_recursive(node: 'ASTNode', visited: Set['ASTNode']):
+        for child in node._direct_children:
+            if child in visited:
+                continue
+
+            visited.add(child)
+            grandchildren = list(ASTNode.__children_recursive(child, visited))
+            visited.update(grandchildren)
+
+            yield child
+            yield from grandchildren
+
     def validate(self) -> bool:
         assert self.symbol_table is not None, "validate() should be called after symbol table binding"
-        children_valid = []
-        for name, value in vars(self).items():
-            if value is None:
-                continue
-            if isinstance(value, ASTNode):
-                children_valid.append(value.validate())
-            if isinstance(value, collections.Iterable):
-                children_valid.extend([e.validate() for e in value if isinstance(e, ASTNode) and e is not None])
+        if self._validation_lock:
+            return True
 
+        self._validation_lock = True
+        children_valid = [child.validate() for child in self._direct_children]
+        self._validation_lock = False
         return all(children_valid) and self._on_validate()
 
     @abstractmethod
@@ -63,8 +98,11 @@ class ExpressionNode(ASTNode, metaclass=ABCMeta):
     def _calculate_const(self) -> Union[int, float, str]:
         raise NotImplementedError("Abstract method")
 
-    @abstractmethod
+    @property
     def type(self) -> symbols.SymbolType:
+        return self._get_type()
+    
+    def _get_type(self) -> symbols.SymbolType:
         raise NotImplementedError("Abstract method")
 
 
@@ -89,7 +127,7 @@ class ConstantLiteralNode(ExpressionNode):
     def is_const(self) -> bool:
         return True
 
-    def type(self) -> symbols.SymbolType:
+    def _get_type(self) -> symbols.SymbolType:
         return self.constant_type
 
     def _on_bind_symbol_table(self):
@@ -113,7 +151,7 @@ class VariableAccessNode(ExpressionNode):
     def is_const(self) -> bool:
         return False
 
-    def type(self) -> symbols.SymbolType:
+    def _get_type(self) -> symbols.SymbolType:
         return self.symbol_table.get_symbol(self.symbol_name).type
 
     def _on_bind_symbol_table(self):
@@ -140,7 +178,7 @@ class FunctionCallExpressionNode(ExpressionNode):
     def is_const(self) -> bool:
         return False
 
-    def type(self) -> symbols.SymbolType:
+    def _get_type(self) -> symbols.SymbolType:
         function_symbol = self.symbol_table.get_symbol(self.function_name)  # type: symbols.FunctionSymbol
         return function_symbol.ret_type
 
@@ -159,7 +197,7 @@ class FunctionCallExpressionNode(ExpressionNode):
             raise errors.AtomCTypeError(f"not enough arguments in call to function {self.function_name}", self.lineno)
 
         for narg, (arg_value, arg_def) in enumerate(zip(self.args, function_symbol.args)):
-            implicit_cast_error = typecheck.check_cast_implicit(arg_value.type(), arg_def.type)
+            implicit_cast_error = typecheck.check_cast_implicit(arg_value.type, arg_def.type)
             if implicit_cast_error:
                 raise errors.AtomCTypeError(f"in call to {self.function_name} - argument {narg} type mismatch; {implicit_cast_error}", self.lineno)
         return True
@@ -180,8 +218,8 @@ class ArrayItemAccessNode(ExpressionNode):
     def is_const(self) -> bool:
         return False
 
-    def type(self) -> symbols.SymbolType:
-        array_type = self.array_variable.type()
+    def _get_type(self) -> symbols.SymbolType:
+        array_type = self.array_variable.type
         if isinstance(array_type, symbols.ArrayType):
             return array_type.elem_type
 
@@ -190,11 +228,11 @@ class ArrayItemAccessNode(ExpressionNode):
         self.index_expression.bind_symbol_table(self.symbol_table)
 
     def _on_validate(self) -> bool:
-        array_type = self.array_variable.type()
+        array_type = self.array_variable.type
         if not isinstance(array_type, symbols.ArrayType):
             raise errors.AtomCTypeError("Subscription operator [] applied to non-array expression", self.lineno)
 
-        if typecheck.check_cast_implicit(self.index_expression.type(), symbols.TYPE_INT):
+        if typecheck.check_cast_implicit(self.index_expression.type, symbols.TYPE_INT):
             raise errors.AtomCTypeError("Array index expression must be of integer type", self.lineno)
         return True
 
@@ -214,8 +252,8 @@ class StructMemberAccessNode(ExpressionNode):
     def is_const(self) -> bool:
         return False
 
-    def type(self) -> symbols.SymbolType:
-        struct_type = self.struct_variable.type()  # type: symbols.StructType
+    def _get_type(self) -> symbols.SymbolType:
+        struct_type = self.struct_variable.type  # type: symbols.StructType
         struct_symbol = struct_type.struct_symbol
         member_symbol = struct_symbol.get_member_symbol(self.member_name)
         return member_symbol.type
@@ -224,7 +262,7 @@ class StructMemberAccessNode(ExpressionNode):
         self.struct_variable.bind_symbol_table(self.symbol_table)
 
     def _on_validate(self):
-        struct_type = self.struct_variable.type()
+        struct_type = self.struct_variable.type
         if isinstance(struct_type, symbols.StructType):
             struct_symbol = struct_type.struct_symbol
             member_symbol = struct_symbol.get_member_symbol(self.member_name)
@@ -249,14 +287,14 @@ class CastExpressionNode(ExpressionNode):
         return f"({self.base_type}{array if self.is_array else ''}) {self.cast_expr}"
 
     def _calculate_const(self) -> Union[int, float, str]:
-        target_type = symbols.python_type(self.type())  # cast the value to the right type
+        target_type = symbols.python_type(self.type)  # cast the value to the right type
         return target_type(self.cast_expr.calculate_const())
 
     def is_const(self) -> bool:
         return self.cast_expr.is_const()
 
-    def type(self) -> symbols.SymbolType:
-        return typecheck.resolve_type(self.base_type, self.is_array, self.array_size_expr)
+    def _get_type(self) -> symbols.SymbolType:
+        return typecheck.resolve_type(self.base_type, self.is_array, self.array_size_expr, self.lineno)
 
     def _on_bind_symbol_table(self):
         typecheck.bind_struct_type(self.base_type, self.symbol_table, self.lineno)
@@ -265,7 +303,7 @@ class CastExpressionNode(ExpressionNode):
         self.cast_expr.bind_symbol_table(self.symbol_table)
 
     def _on_validate(self):
-        explicit_cast_error = typecheck.check_cast_explicit(self.cast_expr.type(), self.type())
+        explicit_cast_error = typecheck.check_cast_explicit(self.cast_expr.type, self.type)
         if explicit_cast_error:
             raise errors.AtomCTypeError(explicit_cast_error, self.lineno)
         return True
@@ -295,11 +333,11 @@ class LogicalNegationExpressionNode(UnaryExpressionNode):
     def _calculate_const(self) -> Union[int, float, str]:
         return int(self.operand.calculate_const() == 0)
 
-    def type(self) -> symbols.SymbolType:
+    def _get_type(self) -> symbols.SymbolType:
         return symbols.TYPE_INT
 
     def _on_validate(self):
-        operand_type = self.operand.type()
+        operand_type = self.operand.type
         if not typecheck.is_numeric(operand_type) and not isinstance(operand_type, symbols.ArrayType):
             raise errors.AtomCTypeError("logical operators can only be applied to numeric and array types", self.lineno)
 
@@ -315,11 +353,11 @@ class ArithmeticNegationExpressionNode(UnaryExpressionNode):
     def _calculate_const(self) -> Union[int, float, str]:
         return -self.operand.calculate_const()
 
-    def type(self) -> symbols.SymbolType:
-        return self.operand.type()
+    def _get_type(self) -> symbols.SymbolType:
+        return self.operand.type
 
     def _on_validate(self):
-        operand_type = self.operand.type()
+        operand_type = self.operand.type
         if not typecheck.is_numeric(operand_type):
             raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric types", self.lineno)
 
@@ -356,11 +394,11 @@ class AssignmentExpressionNode(BinaryExpressionNode):
     def _calculate_const(self) -> Union[int, float, str]:
         return self.operand_right.calculate_const()
 
-    def type(self) -> symbols.SymbolType:
-        return self.operand_right.type()
+    def _get_type(self) -> symbols.SymbolType:
+        return self.operand_right.type
 
     def _on_validate(self):
-        implicit_cast_error = typecheck.check_cast_implicit(self.operand_right.type(), self.operand_left.type())
+        implicit_cast_error = typecheck.check_cast_implicit(self.operand_right.type, self.operand_left.type)
         if implicit_cast_error:
             raise errors.AtomCTypeError(f"invalid assignment - {implicit_cast_error}", self.lineno)
         return True
@@ -376,12 +414,12 @@ class BinaryLogicalExpressionNode(BinaryExpressionNode):
         right_value = self.operand_right.calculate_const()
         return int(bool(self.operator(left_value, right_value)))
 
-    def type(self) -> symbols.SymbolType:
+    def _get_type(self) -> symbols.SymbolType:
         return symbols.TYPE_INT
 
     def _on_validate(self):
-        left_type = self.operand_left.type()
-        right_type = self.operand_left.type()
+        left_type = self.operand_left.type
+        right_type = self.operand_left.type
         if not typecheck.is_numeric(left_type) and not isinstance(left_type, symbols.ArrayType):
             raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric and array types", self.lineno)
         if not typecheck.is_numeric(right_type) and not isinstance(right_type, symbols.ArrayType):
@@ -438,12 +476,12 @@ class BinaryArithmeticExpressionNode(BinaryExpressionNode):
     def _calculate_const(self) -> Union[int, float, str]:
         left_value = self.operand_left.calculate_const()
         right_value = self.operand_right.calculate_const()
-        target_type = symbols.python_type(self.type())
+        target_type = symbols.python_type(self.type)
         return target_type(self.operator(left_value, right_value))
 
-    def type(self) -> symbols.SymbolType:
-        left_type = self.operand_left.type()
-        right_type = self.operand_left.type()
+    def _get_type(self) -> symbols.SymbolType:
+        left_type = self.operand_left.type
+        right_type = self.operand_left.type
         if left_type == symbols.TYPE_REAL or right_type == symbols.TYPE_REAL:
             return symbols.TYPE_REAL
         elif left_type == symbols.TYPE_INT or right_type == symbols.TYPE_INT:
@@ -454,8 +492,8 @@ class BinaryArithmeticExpressionNode(BinaryExpressionNode):
             raise errors.AtomCTypeError("Arithmetic expression only support numeric operands", self.lineno)
 
     def _on_validate(self):
-        left_type = self.operand_left.type()
-        right_type = self.operand_left.type()
+        left_type = self.operand_left.type
+        right_type = self.operand_left.type
         if not typecheck.is_numeric(left_type) or not typecheck.is_numeric(right_type):
             raise errors.AtomCTypeError("arithmetic operators can only be applied to numeric types", self.lineno)
 
@@ -512,7 +550,7 @@ class StructDeclarationNode(DeclarationNode):
         for member in self.member_declarations:
             member_symbols.extend(member.get_symbols())
 
-        struct_symbol = symbols.StructSymbol(self.struct_name, member_symbols, symbols.StorageType.DECLARATION)
+        struct_symbol = symbols.StructSymbol(self.struct_name, member_symbols, symbols.StorageType.DECLARATION, self.lineno)
         return [struct_symbol]
 
     def _on_bind_symbol_table(self):
@@ -520,7 +558,10 @@ class StructDeclarationNode(DeclarationNode):
         for member in self.member_declarations:
             member.bind_symbol_table(member_symbol_table)
 
-        self.symbol_table.add_symbol(self.get_symbol(), self.lineno)
+        self.symbol_table.add_symbol(self.get_symbol())
+
+    def _on_validate(self):
+        return True
 
 
 class VariableDeclarationNode(DeclarationNode):
@@ -536,8 +577,8 @@ class VariableDeclarationNode(DeclarationNode):
     def get_symbols(self) -> Sequence[symbols.VariableSymbol]:
         var_symbols = []
         for decl in self.declarations:
-            decl_type = typecheck.resolve_type(self.base_type, decl.is_array, decl.array_size_expr)
-            var_symbols.append(symbols.VariableSymbol(decl.name, decl_type, self.symbol_table.storage))
+            decl_type = typecheck.resolve_type(self.base_type, decl.is_array, decl.array_size_expr, self.lineno)
+            var_symbols.append(symbols.VariableSymbol(decl.name, decl_type, self.symbol_table.storage, decl.lineno))
 
         return var_symbols
 
@@ -547,7 +588,12 @@ class VariableDeclarationNode(DeclarationNode):
             decl.bind_symbol_table(self.symbol_table)
 
         for symbol in self.get_symbols():
-            self.symbol_table.add_symbol(symbol, self.lineno)
+            self.symbol_table.add_symbol(symbol)
+
+    def _on_validate(self):
+        if self.base_type == symbols.TYPE_VOID:
+            raise errors.AtomCTypeError("Cannot declare variables of type void", self.lineno)
+        return True
 
 
 class PartialVariableDeclarationNode(DeclarationNode):
@@ -567,6 +613,9 @@ class PartialVariableDeclarationNode(DeclarationNode):
 
     def get_symbols(self):
         raise NotImplementedError("Cannot get symbol from partial declaration")
+
+    def _on_validate(self):
+        return True
 
 
 class FunctionArgumentDeclarationNode(VariableDeclarationNode):
@@ -591,14 +640,16 @@ class FunctionDeclarationNode(DeclarationNode):
         self.name = name
         self.arguments = arguments
         self.function_body = function_body
+        for child in self._children:
+            child._set_current_function(self)
 
     def __str__(self):
         return f"{self.return_type}{'*' if self.is_array else ''} {self.name}({', '.join(map(str, self.arguments))}) {self.function_body}"
 
     def get_symbols(self) -> Sequence[symbols.FunctionSymbol]:
-        ret_type = typecheck.resolve_type(self.return_type, self.is_array)
+        ret_type = typecheck.resolve_type(self.return_type, self.is_array, lineno=self.lineno)
         arg_symbols = [arg.get_symbol() for arg in self.arguments]
-        function_symbol = symbols.FunctionSymbol(self.name, ret_type, symbols.StorageType.DECLARATION, *arg_symbols)
+        function_symbol = symbols.FunctionSymbol(self.name, ret_type, symbols.StorageType.DECLARATION, self.lineno, *arg_symbols)
         return [function_symbol]
 
     def _on_bind_symbol_table(self):
@@ -609,7 +660,12 @@ class FunctionDeclarationNode(DeclarationNode):
 
         self.function_body.disable_scoping()
         self.function_body.bind_symbol_table(function_symbol_table)
-        self.symbol_table.add_symbol(self.get_symbol(), self.lineno)
+        self.symbol_table.add_symbol(self.get_symbol())
+
+    def _on_validate(self):
+        if self.return_type != symbols.TYPE_VOID and not any(isinstance(child, ReturnStatementNode) for child in self._children):
+            raise errors.AtomCTypeError("missing return from non-void function", self.lineno)
+        return True
 
 
 class StatementNode(ASTNode, metaclass=ABCMeta):
@@ -639,12 +695,21 @@ class ConditionalStatementNode(StatementNode):
         if self.body_else:
             self.body_else.bind_symbol_table(self.symbol_table)
 
+    def _on_validate(self):
+        condition_type = self.condition.type
+        if not typecheck.is_numeric(condition_type):
+            raise  errors.AtomCTypeError(f"expression of type {condition_type} cannot be used as a logical test", self.condition.lineno)
+
+        return True
+
 
 class WhileStatementNode(StatementNode):
     def __init__(self, lineno: int, condition: ExpressionNode, body: StatementNode=None):
         super().__init__(lineno)
         self.condition = condition
         self.body = body
+        for child in self._children:
+            child._set_current_loop(self)
 
     def __str__(self):
         return f"while ({self.condition})" + (f" {self.body}" if self.body is not None else ";")
@@ -653,6 +718,13 @@ class WhileStatementNode(StatementNode):
         self.condition.bind_symbol_table(self.symbol_table)
         if self.body:
             self.body.bind_symbol_table(self.symbol_table)
+
+    def _on_validate(self):
+        condition_type = self.condition.type
+        if not typecheck.is_numeric(condition_type):
+            raise  errors.AtomCTypeError(f"expression of type {condition_type} cannot be used as a logical test", self.condition.lineno)
+
+        return True
 
 
 class ForStatementNode(StatementNode):
@@ -663,6 +735,8 @@ class ForStatementNode(StatementNode):
         self.condition = condition
         self.increment = incremnet
         self.body = body
+        for child in self._children:
+            child._set_current_loop(self)
 
     def __str__(self):
         initial = '' if self.initial is None else str(self.initial)
@@ -680,6 +754,13 @@ class ForStatementNode(StatementNode):
         if self.body:
             self.body.bind_symbol_table(self.symbol_table)
 
+    def _on_validate(self):
+        condition_type = self.condition.type
+        if not typecheck.is_numeric(condition_type):
+            raise  errors.AtomCTypeError(f"expression of type {condition_type} cannot be used as a logical test", self.condition.lineno)
+
+        return True
+
 
 class BreakStatementNode(StatementNode):
     def __init__(self, lineno: int):
@@ -687,6 +768,12 @@ class BreakStatementNode(StatementNode):
 
     def _on_bind_symbol_table(self):
         pass
+
+    def _on_validate(self):
+        if self.current_loop is None:
+            raise errors.AtomCDomainError("break statement outside loop", self.lineno)
+
+        return True
 
 
 class ReturnStatementNode(StatementNode):
@@ -701,6 +788,23 @@ class ReturnStatementNode(StatementNode):
     def _on_bind_symbol_table(self):
         if self.value:
             self.value.bind_symbol_table(self.symbol_table)
+
+    def _on_validate(self):
+        if self.current_function is None:
+            raise errors.AtomCDomainError("return statement outside function", self.lineno)
+
+        if self.value is None and self.current_function.return_type != symbols.TYPE_VOID:
+            raise errors.AtomCTypeError("void return in non-void function", self.lineno)
+
+        if self.value is not None:
+            if self.current_function.return_type == symbols.TYPE_VOID:
+                raise errors.AtomCTypeError("non-void return in void function", self.lineno)
+
+            implicit_cast_error = typecheck.check_cast_implicit(self.value.type, self.current_function.return_type)
+            if implicit_cast_error:
+                raise errors.AtomCTypeError(f"bad return type - {implicit_cast_error}", self.lineno)
+
+        return True
 
 
 class CompoundStatementNode(StatementNode):
@@ -722,6 +826,9 @@ class CompoundStatementNode(StatementNode):
         for instr in self.instructions:
             instr.bind_symbol_table(inner_symbol_table if self.scope else self.symbol_table)
 
+    def _on_validate(self):
+        return True
+
 
 class ExpressionStatementNode(StatementNode):
     def __init__(self, lineno: int, expression: ExpressionNode):
@@ -734,6 +841,9 @@ class ExpressionStatementNode(StatementNode):
     def _on_bind_symbol_table(self):
         self.expression.bind_symbol_table(self.symbol_table)
 
+    def _on_validate(self):
+        return True
+
 
 class EmptyStatementNode(StatementNode):
     def __init__(self, lineno: int):
@@ -744,6 +854,9 @@ class EmptyStatementNode(StatementNode):
 
     def _on_bind_symbol_table(self):
         pass
+
+    def _on_validate(self):
+        return True
 
 
 class UnitNode(ASTNode):
@@ -757,3 +870,6 @@ class UnitNode(ASTNode):
 
     def __str__(self):
         return ' '.join(map(str, self.declarations))
+
+    def _on_validate(self):
+        return True
