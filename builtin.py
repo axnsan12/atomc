@@ -9,7 +9,10 @@
 # double seconds() Returneaza un numar (posibil zecimal pentru precizie mai buna)
 # de secunde. Nu se specifica de cand se calculeaza acest numar
 # (poate fi de la inceputul rularii programului, de la 1/1/1970, …)
+import sys
+import time
 import symbols
+from runtime import stack, errors
 
 def _array(elem_type: symbols.BasicType, size: int=None):
     return symbols.ArrayType(elem_type, size)
@@ -39,3 +42,40 @@ get_c = _builtin('get_c', symbols.TYPE_CHAR)
 seconds = _builtin('seconds', symbols.TYPE_REAL)
 
 all_builtins = [put_s, get_s, put_i, get_i, put_d, get_d, put_c, get_c, seconds]
+
+
+stdout = ''
+
+def _stdout(msg):
+    # sys.stdout.write(str(msg))
+    global stdout
+    stdout += str(msg)
+
+def _stdin():
+    return input()
+
+
+def exec_builtin(name: str, st: 'stack.DataStack'):
+    if name == 'put_s':
+        _stdout(st.read_string(st.popa()))
+    elif name == 'put_i':
+        _stdout(st.popi())
+    elif name == 'put_d':
+        _stdout(st.popd())
+    elif name == 'put_c':
+        _stdout(chr(st.popc()))
+    elif name == 'get_s':
+        addr = st.popa()
+        data = _stdin()
+        st.write_at(addr, data.encode('utf8') + b'\0')
+    elif name == 'get_i':
+        st.pushi(int(_stdin()))
+    elif name == 'get_d':
+        st.pushd(float(_stdin()))
+    elif name == 'get_c':
+        st.pushc(ord(_stdin()))
+    elif name == 'seconds':
+        st.pushd(float(time.monotonic()))
+    else:
+        raise runtime.errors.AtomCVMRuntimeError(f"Undefined builtin function {name}")
+
