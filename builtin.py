@@ -68,6 +68,7 @@ def exec_builtin(name: str, st: 'stack.DataStack'):
         addr = st.popa()
         data = _stdin()
         st.write_at(addr, data.encode('utf8') + b'\0')
+        st.pusha(addr)
     elif name == 'get_i':
         st.pushi(int(_stdin()))
     elif name == 'get_d':
@@ -77,5 +78,5 @@ def exec_builtin(name: str, st: 'stack.DataStack'):
     elif name == 'seconds':
         st.pushd(float(time.monotonic()))
     else:
-        raise runtime.errors.AtomCVMRuntimeError(f"Undefined builtin function {name}")
+        raise errors.AtomCVMRuntimeError(f"Undefined builtin function {name}")
 

@@ -257,12 +257,14 @@ class Tokenizer(object):
         if char in trans:
             next_state = trans[char]
             consuming = (self.current_state, next_state, char) not in self.non_consuming
-            self._print_debug("%r: explicit %sconsuming transition from %d to %d"
+            if not isinstance(next_state, Error):
+                self._print_debug("%r: explicit %sconsuming transition from %d to %d"
                               % (char, '' if consuming else 'non-', self.current_state, next_state))
         elif None in trans:
             next_state = trans[None]
             consuming = (self.current_state, next_state, None) not in self.non_consuming
-            self._print_debug("%r: default %sconsuming transition from %d to %d"
+            if not isinstance(next_state, Error):
+                self._print_debug("%r: default %sconsuming transition from %d to %d"
                               % (char, '' if consuming else 'non-', self.current_state, next_state))
         else:
             raise ValueError("There is no transition defined for %r from state %d" % (char, self.current_state))

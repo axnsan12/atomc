@@ -1,8 +1,13 @@
-import sys
 import struct
+import itertools
 from typing import Tuple, Union
+from runtime import errors
 
-import runtime.errors, runtime.instructions
+
+def _sentinel(val: int, length: int, val_size: int=4):
+    values = tuple(val.to_bytes(val_size, byteorder='big', signed=False))
+    yield from itertools.chain(*itertools.repeat(values, length // len(values)))
+    yield from values[:length % len(values)]
 
 
 class DataStack(object):
@@ -21,31 +26,31 @@ class DataStack(object):
 
     def _push_bytes(self, data: bytes):
         if self._sp + len(data) > self._size:
-            raise runtime.errors.AtomCVMRuntimeError("out of stack memory")
+            raise errors.AtomCVMRuntimeError("out of stack memory")
 
         self._sp += len(data)
         self._stack[self._sp - len(data):self._sp] = data
 
     def _pop_bytes(self, count: int) -> bytearray:
         if self._sp - count < 0:
-            raise runtime.errors.AtomCVMRuntimeError("stack buffer underflow")
+            raise errors.AtomCVMRuntimeError("stack buffer underflow")
 
         self._sp -= count
         return self._stack[self._sp:self._sp + count]
 
     def push(self, value, value_type: DataType):
         if not isinstance(value, value_type.python_type):
-            raise runtime.errors.AtomCVMRuntimeError("wrong value type for push")
+            raise errors.AtomCVMRuntimeError("wrong value type for push")
         try:
             self._push_bytes(struct.pack(value_type.fmt, value))
         except struct.error as e:
-            raise runtime.errors.AtomCVMRuntimeError(f"push error: {str(e)}")
+            raise errors.AtomCVMRuntimeError(f"push error: {str(e)}")
 
     def pop(self, value_type: DataType):
         try:
             return value_type.python_type(struct.unpack(value_type.fmt, bytes(self._pop_bytes(value_type.size)))[0])
         except struct.error as e:
-            raise runtime.errors.AtomCVMRuntimeError(f"pop error: {str(e)}")
+            raise errors.AtomCVMRuntimeError(f"pop error: {str(e)}")
 
     def pushi(self, val: int):
         self.push(val, DataStack.DataType.INT)
@@ -73,39 +78,47 @@ class DataStack(object):
 
     def alloc(self, size: int):
         if self._sp + size > self._size:
-            raise runtime.errors.AtomCVMRuntimeError("out of stack memory")
+            raise errors.AtomCVMRuntimeError("out of stack memory")
         ret = self._sp
+        self._stack[self._sp:self._sp+size] = _sentinel(0xBAADF00D, size)
         self._sp += size
         return ret
 
     def free(self, size: int):
         if self._sp - size < 0:
-            raise runtime.errors.AtomCVMRuntimeError("stack buffer underflow")
+            raise errors.AtomCVMRuntimeError("stack buffer underflow")
         self._sp -= size
+        self._stack[self._sp:self._sp+size] = _sentinel(0xDEADBEEF, size)
 
     def read_from(self, addr: int, size: int) -> bytes:
         if addr < 0 or size < 0 or addr + size >= self._size:
-            raise runtime.errors.AtomCVMRuntimeError("out-of-bounds memory access")
+            raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         return bytes(self._stack[addr:addr+size])
 
     def write_at(self, addr: int, data: bytes):
         if addr < 0 or addr + len(data) >= self._size:
-            raise runtime.errors.AtomCVMRuntimeError("out-of-bounds memory access")
+            raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         self._stack[addr:addr+len(data)] = data
 
     def read_string(self, addr: int) -> str:
         if addr < 0:
-            raise runtime.errors.AtomCVMRuntimeError("out-of-bounds memory access")
+            raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         end = addr
         while self._stack[end] != 0 and end < self._size:
             end += 1
         if end < self._size:
-            raise runtime.errors.AtomCVMRuntimeError("stack overflow while reading string")
+            raise errors.AtomCVMRuntimeError("stack overflow while reading string")
         return self._stack[addr:end].decode('utf8')
 
     @property
     def sp(self):
         return self._sp
+
+    def copy(self):
+        new_stack = DataStack(self._size)
+        new_stack._stack[:] = self._stack[:]
+        new_stack._sp = self._sp
+        return new_stack
 
 
 CHAR = DataStack.DataType.CHAR = DataStack.DataType(int, '=b', 'char', 1, (-2**7, 2**7 - 1))
@@ -117,18 +130,24 @@ ADDR = DataStack.DataType.ADDR = DataStack.DataType(int, '=i', 'int', 4, (-2**31
 class CallStack(object):
     def __init__(self):
         self.stack = list()
+        self._fp = -1
 
-    def call(self, ret_addr: int, frame_pointer: int):
-        self.stack.append((ret_addr, frame_pointer))
+    def call(self, ret_addr: int):
+        self.stack.append(ret_addr)
 
     @property
-    def frame_pointer(self):
-        if not self.stack:
-            raise runtime.errors.AtomCVMRuntimeError("unbalanced call stack")
-        return self.stack[-1][1]
+    def fp(self):
+        return self._fp
+
+    @fp.setter
+    def fp(self, frame_pointer: int):
+        self._fp = frame_pointer
 
     def ret(self) -> int:
         if not self.stack:
-            raise runtime.errors.AtomCVMRuntimeError("unbalanced call stack")
+            raise errors.AtomCVMRuntimeError("unbalanced call stack")
         ret_addr, fp = self.stack.pop()
         return ret_addr
+
+    def reset(self):
+        self.stack = list()

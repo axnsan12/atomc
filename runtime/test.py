@@ -36,7 +36,7 @@ def main():
     program.append(instructions.PUSHCT(3, stack.INT, 1))  # push constant 3
     program.append(instructions.STORE(stack.INT.size, 2))  # store int to addr
 
-    loop_start = len(program)
+    loop_start = len(program)  # {
     # put_i(v)
     program.append(instructions.PUSHCT(v, stack.ADDR, 3))  # push addr of v
     program.append(instructions.LOAD(stack.INT.size, 4))  # load int from addr
@@ -50,7 +50,7 @@ def main():
     program.append(instructions.SUB(stack.INT, 9))  # subtract last 2 ints ~ v-1
     program.append(instructions.STORE(stack.INT.size, 10))  # store result back to v
 
-    # while (v != 0) - jump back to loop start
+    # } while (v != 0) - jump back to loop start
     program.append(instructions.PUSHCT(v, stack.ADDR, 11))  # push addr of v (for load)
     program.append(instructions.LOAD(stack.INT.size, 12))  # load int from addr
     program.append(instructions.PUSHCT(0, stack.INT, 13))  # push constant 0

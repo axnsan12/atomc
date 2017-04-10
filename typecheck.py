@@ -78,7 +78,7 @@ def check_cast_implicit(from_type: symbols.SymbolType, into_type: symbols.Symbol
 
     if is_numeric(into_type):
         if numeric_types.index(into_type) < numeric_types.index(from_type):
-            return f"narrowin conversion from {from_type} to {into_type} cannot be done implicitly; add a cast?"
+            return f"narrowing conversion from {from_type} to {into_type} cannot be done implicitly; add a cast?"
 
         return ''
 

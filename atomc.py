@@ -2,6 +2,7 @@ import os
 
 import itertools
 import builtin
+import errors
 import lexer
 import symbols
 from syntax import parser, rules
@@ -9,9 +10,8 @@ from syntax import parser, rules
 
 def main():
     for test in os.listdir('tests'):
-        print('=================== Analyzing file %s ==================' % test)
+        print('================== Analyzing file %s ==================' % test)
 
-        # test = '4.c'
         with open(os.path.join('tests', test), 'rt') as infile:
             try:
                 tokens = lexer.get_tokens(infile)
@@ -27,7 +27,7 @@ def main():
 
                 unit_node = syntax_parser.get_syntax_tree()
                 if unit_node is not None:
-                    print("================== PARSED SYNTAX ================")
+                    print("===================== PARSED SYNTAX =====================")
                     print(unit_node)
                 else:
                     print("SYNTAX PARSE FAILED")
@@ -38,12 +38,14 @@ def main():
 
                 global_symbol_table = symbols.SymbolTable('global', symbols.StorageType.GLOBAL, builtin_symbol_table)
                 unit_node.bind_symbol_table(global_symbol_table)
+                print(builtin_symbol_table)
+
                 unit_node.validate()
+                print("============== TYPE VALIDATION SUCCESSFUL ===============")
 
-                print(global_symbol_table)
-
-            except ValueError as e:
+            except errors.AtomCError as e:
                 print(e)
+                return
 
         print('=========================================================')
 

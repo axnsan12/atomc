@@ -1,10 +1,11 @@
 from typing import Sequence
-from runtime import stack, instructions
+from runtime import stack, instructions, errors
 
 
 class AtomCVM(object):
     def __init__(self, memory: 'stack.DataStack', program: Sequence['instructions.Instruction'], entry_point, debug=False):
-        self.data_stack = memory
+        self.globals = memory.copy()
+        self.data_stack = memory.copy()
         self.call_stack = stack.CallStack()
         self.program = program
         self.entry_point = entry_point
@@ -27,13 +28,15 @@ class AtomCVM(object):
     @ip.setter
     def ip(self, addr: int):
         if addr not in range(0, len(self.program)):
-            raise ValueError("Instruction pointer out of program memory")
+            raise errors.AtomCVMRuntimeError("Instruction pointer jumped out of program memory")
         self._ip = addr
         self._ip_jumped = True
         self._print_debug(f"ip jumped to {self.ip}")
 
     def execute(self):
         while not self._halted:
+            if self.ip not in range(0, len(self.program)):
+                raise errors.AtomCVMRuntimeError("Instruction pointer outside program memory")
             instr = self.program[self._ip]
             self._ip_jumped = False
             self._print_debug(f"executing `{instr}`@{self.ip}")
@@ -43,5 +46,11 @@ class AtomCVM(object):
 
     def halt(self):
         self._halted = True
+
+    def reset(self):
+        self._ip = self.entry_point
+        self._halted = self._ip_jumped = False
+        self.data_stack = self.globals.copy()
+        self.call_stack.reset()
 
 

@@ -11,7 +11,7 @@ class Instruction(ABC):
         self.lineno  = lineno
 
     @abstractmethod
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         raise NotImplementedError("Abstract method.")
 
     @staticmethod
@@ -53,7 +53,7 @@ class ArithmeticInstruction(Instruction):
 
         return val
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         b = vm.data_stack.pop(self.data_type)
         a = vm.data_stack.pop(self.data_type)
         vm.data_stack.push(self._cast_number(self.op(a, b)), self.data_type)
@@ -83,7 +83,7 @@ class LogicalInstruction(Instruction):
         self.data_type = data_type
         self.op = op
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         b = vm.data_stack.pop(self.data_type)
         a = vm.data_stack.pop(self.data_type)
         vm.data_stack.pushi(int(self.op(a, b)))
@@ -127,7 +127,7 @@ class NOT(Instruction):
         super().__init__('NOT_' + self.type_suffix(data_type), lineno)
         self.data_type = data_type
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         val = vm.data_stack.pop(self.data_type)
         vm.data_stack.pushi(int(val == 0))
 
@@ -139,7 +139,7 @@ class NEG(Instruction):
         if data_type == stack.ADDR:
             raise errors.AtomCVMRuntimeError("pointer arithmetic is not allowed")
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         val = vm.data_stack.pop(self.data_type)
         vm.data_stack.push(-val, self.data_type)
 
@@ -149,7 +149,7 @@ class JT(Instruction):
         super().__init__('JT', lineno)
         self.addr = addr
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         test = vm.data_stack.popi()
         if test != 0:
             vm.ip = self.addr
@@ -163,7 +163,7 @@ class JF(Instruction):
         super().__init__('JF', lineno)
         self.addr = addr
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         test = vm.data_stack.popi()
         if test == 0:
             vm.ip = self.addr
@@ -177,7 +177,7 @@ class JMP(Instruction):
         super().__init__('JMP', lineno)
         self.addr = addr
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         vm.ip = self.addr
 
     def __str__(self):
@@ -188,7 +188,7 @@ class HLT(Instruction):
     def __init__(self, lineno: int):
         super().__init__('HLT', lineno)
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         vm.halt()
 
 
@@ -196,7 +196,7 @@ class NOP(Instruction):
     def __init__(self, lineno: int):
         super().__init__('NOP', lineno)
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         pass
 
 
@@ -205,7 +205,7 @@ class LOAD(Instruction):
         super().__init__('LOAD', lineno)
         self.size = size
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         addr = vm.data_stack.popa()
         data = vm.data_stack.read_from(addr, self.size)
         vm.data_stack.alloc(self.size)
@@ -220,7 +220,7 @@ class LEAFP(Instruction):
         super().__init__('LEAFP', lineno)
         self.offset = offset
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         vm.data_stack.pusha(vm.call_stack.frame_pointer + self.offset)
 
     def __str__(self):
@@ -233,7 +233,7 @@ class PUSHCT(Instruction):
         self.value = value
         self.data_type = data_type
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         vm.data_stack.push(self.value, self.data_type)
 
     def __str__(self):
@@ -245,7 +245,7 @@ class STORE(Instruction):
         super().__init__('STORE', lineno)
         self.size = size
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         data = vm.data_stack.read_from(vm.data_stack.sp - self.size, self.size)
         vm.data_stack.free(self.size)
         addr = vm.data_stack.popa()
@@ -263,25 +263,51 @@ class CALL(Instruction):
     def __str__(self):
         return f"{self.mnemonic} {self.addr}"
 
-    def execute(self, vm: machine.AtomCVM):
-        vm.call_stack.call(vm.ip + 1, vm.data_stack.sp)
+    def execute(self, vm: 'machine.AtomCVM'):
+        vm.call_stack.call(vm.ip + 1)
         vm.ip = self.addr
 
 
-class RET(Instruction):
+class ENTER(Instruction):
     def __init__(self, size: int, lineno: int):
-        super().__init__('RET', lineno)
+        super().__init__('ENTER', lineno)
         self.size = size
 
     def __str__(self):
         return f"{self.mnemonic} {self.size}"
 
-    def execute(self, vm: machine.AtomCVM):
-        fp = vm.call_stack.frame_pointer
-        ret = vm.data_stack.read_from(vm.data_stack.sp - self.size, self.size)
-        vm.data_stack.free(vm.data_stack.sp - fp)
-        vm.data_stack.alloc(self.size)
-        vm.data_stack.write_at(vm.data_stack.sp - self.size, ret)
+    def execute(self, vm: 'machine.AtomCVM'):
+        vm.data_stack.pusha(vm.call_stack.fp)  # save old frame pointer
+        vm.call_stack.fp = vm.data_stack.sp  # set new frame pointer
+        vm.data_stack.alloc(self.size)  # alloc space for locals
+
+
+class LEAVE(Instruction):
+    def __init__(self, lineno: int):
+        super().__init__('LEAVE', lineno)
+
+    def execute(self, vm: 'machine.AtomCVM'):
+        vm.data_stack.free(vm.data_stack.sp - vm.call_stack.fp)  # free space allocated for locals
+        vm.call_stack.fp = vm.data_stack.popa()  # restore old frame pointer
+
+
+class RETFP(Instruction):
+    def __init__(self, arg_size: int, ret_size: int, lineno: int):
+        super().__init__('RETFP', lineno)
+        self.arg_size = arg_size
+        self.ret_size = ret_size
+
+    def __str__(self):
+        return f"{self.mnemonic} {self.arg_size}, {self.ret_size}"
+
+    def execute(self, vm: 'machine.AtomCVM'):
+        ret = vm.data_stack.read_from(vm.data_stack.sp - self.ret_size, self.ret_size)  # get return value from top of stack
+        vm.data_stack.free(vm.data_stack.sp - vm.call_stack.fp)  # reset call frame
+        vm.call_stack.fp = vm.data_stack.popa()  # restore frame pointer
+        vm.data_stack.free(self.arg_size)  # free function arguments
+        vm.data_stack.alloc(self.ret_size)
+        vm.data_stack.write_at(vm.data_stack.sp - self.ret_size, ret)  # put return value on top of stack
+        vm.ip = vm.call_stack.ret()  # return control to caller
 
 
 class CALLEXT(Instruction):
@@ -292,7 +318,7 @@ class CALLEXT(Instruction):
     def __str__(self):
         return f"{self.mnemonic} {self.builtin_name}"
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         builtin.exec_builtin(self.builtin_name, vm.data_stack)
 
 
@@ -304,7 +330,7 @@ class CAST(Instruction):
         if from_type == stack.ADDR or to_type == stack.ADDR:
             raise errors.AtomCVMRuntimeError(f"CAST cannot operate on addresses")
 
-    def execute(self, vm: machine.AtomCVM):
+    def execute(self, vm: 'machine.AtomCVM'):
         val = vm.data_stack.pop(self.from_type)
         vm.data_stack.push(self.to_type.python_type(val), self.to_type)
 

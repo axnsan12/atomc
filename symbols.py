@@ -1,6 +1,6 @@
 from enum import Enum
-from abc import ABC
-from typing import List, Optional
+from abc import ABC, abstractmethod
+from typing import List, Optional, Iterable
 
 import errors
 from lexer import Token, TokenType
@@ -30,6 +30,11 @@ class SymbolType(ABC):
     def __str__(self):
         return self.type_base.value
 
+    @property
+    @abstractmethod
+    def sizeof(self):
+        raise NotImplementedError("Abstract method.")
+
 
 class BasicType(SymbolType):
     def __init__(self, base: TypeName):
@@ -58,10 +63,24 @@ class BasicType(SymbolType):
     def __hash__(self):
         return hash(self.type_base)
 
+    @property
+    def sizeof(self):
+        if self.type_base == TypeName.TB_VOID:
+            return 0
+
 
 class PrimitiveType(BasicType):
     def __init__(self, base: TypeName):
         super().__init__(base)
+
+    @property
+    def sizeof(self):
+        if self.type_base == TypeName.TB_CHAR:
+            return 1
+        elif self.type_base == TypeName.TB_INT:
+            return 4
+        elif self.type_base == TypeName.TB_REAL:
+            return 8
 
 
 class StructType(BasicType):
@@ -82,6 +101,14 @@ class StructType(BasicType):
     def set_symbol(self, symbol_table: 'SymbolTable'):
         self.struct_symbol = symbol_table.get_symbol(self.struct_name)
 
+    @property
+    def sizeof(self):
+        size = 0
+        for member in self.struct_symbol.members:
+            size += member.type.sizeof
+
+        return size
+
 
 class ArrayType(SymbolType):
     def __init__(self, elem_type: BasicType, size: int=None):
@@ -97,6 +124,10 @@ class ArrayType(SymbolType):
 
     def __hash__(self):
         return hash((self.type_base, self.elem_type, self.size))
+
+    @property
+    def sizeof(self):
+        return TYPE_INT.sizeof
 
 
 TYPE_VOID = BasicType(TypeName.TB_VOID)
@@ -167,7 +198,7 @@ class SymbolTable(object):
         self._children = []  # type: List[SymbolTable]
         self.scope_name = scope_name
         self.storage = storage
-        self.symbols = {}
+        self._symbols = {}
         if outer:
             outer._children.append(self)
             self.scope_name = f"{outer.scope_name}.{scope_name}"
@@ -179,23 +210,27 @@ class SymbolTable(object):
         return self.outer.get_symbol(symbol_name) if self.outer else None
 
     def _get_symbol_this(self, symbol_name) -> Optional[Symbol]:
-        return self.symbols.get(symbol_name, None)
+        return self._symbols.get(symbol_name, None)
 
     def add_symbol(self, symbol: Symbol):
         existing = self._get_symbol_this(symbol.name)
         if existing:
             raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name), symbol.lineno)
 
-        self.symbols[symbol.name] = symbol
+        self._symbols[symbol.name] = symbol
 
     def clear_self(self):
-        self.symbols = {}
+        self._symbols = {}
 
     def _depth(self):
         return 0 if self.outer is None else 1 + self.outer._depth()
 
+    @property
+    def symbols(self) -> Iterable[Symbol]:
+        return list(self._symbols.values()) + list(sum((child.symbols for child in self._children), []))
+
     def __str__(self):
         tabs = "\t" * self._depth()
-        self_symbols = ', '.join(map(str, self.symbols.values())) if self.symbols else "<empty>"
+        self_symbols = ', '.join(map(str, self._symbols.values())) if self._symbols else "<empty>"
         child_symbols = '\n'.join(map(str, self._children))
         return tabs + f"Symbol table `{self.scope_name}`: " + self_symbols + ('\n' if child_symbols else '') + child_symbols

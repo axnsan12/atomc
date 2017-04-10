@@ -84,6 +84,9 @@ class ExpressionNode(ASTNode, metaclass=ABCMeta):
         if type(self) == ExpressionNode:
             raise AssertionError("Do not instantiate ExpressionNode directly. Use an appropriate subclass.")
 
+    def is_lval(self) -> bool:
+        return False
+
     @abstractmethod
     def is_const(self) -> bool:
         raise NotImplementedError("Abstract method")
@@ -148,6 +151,9 @@ class VariableAccessNode(ExpressionNode):
     def _calculate_const(self) -> Union[int, float, str]:
         raise NotImplementedError("Non-constant expression")
 
+    def is_lval(self) -> bool:
+        return True
+
     def is_const(self) -> bool:
         return False
 
@@ -158,8 +164,12 @@ class VariableAccessNode(ExpressionNode):
         pass
 
     def _on_validate(self) -> bool:
-        if self.symbol_table.get_symbol(self.symbol_name) is None:
+        var = self.symbol_table.get_symbol(self.symbol_name)
+        if var is None:
             raise errors.AtomCDomainError(f"undefined variable {self.symbol_name}", self.lineno)
+
+        if not isinstance(var, symbols.VariableSymbol):
+            raise errors.AtomCTypeError(f"symbol {var} cannot be used as a value", self.lineno);
 
         return True
 
@@ -215,6 +225,9 @@ class ArrayItemAccessNode(ExpressionNode):
     def _calculate_const(self) -> Union[int, float, str]:
         raise NotImplementedError("Non-constant expression")
 
+    def is_lval(self) -> bool:
+        return True
+
     def is_const(self) -> bool:
         return False
 
@@ -248,6 +261,9 @@ class StructMemberAccessNode(ExpressionNode):
 
     def _calculate_const(self) -> Union[int, float, str]:
         raise NotImplementedError("Non-constant expression")
+
+    def is_lval(self) -> bool:
+        return True
 
     def is_const(self) -> bool:
         return False
@@ -398,6 +414,8 @@ class AssignmentExpressionNode(BinaryExpressionNode):
         return self.operand_right.type
 
     def _on_validate(self):
+        if not self.operand_left.is_lval():
+            raise errors.AtomCTypeError(f"assignment requires lvalue as left operand; {self.operand_left} is not an lvalue", self.lineno)
         implicit_cast_error = typecheck.check_cast_implicit(self.operand_right.type, self.operand_left.type)
         if implicit_cast_error:
             raise errors.AtomCTypeError(f"invalid assignment - {implicit_cast_error}", self.lineno)
