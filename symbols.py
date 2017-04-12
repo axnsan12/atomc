@@ -1,5 +1,7 @@
 from enum import Enum
 from abc import ABC, abstractmethod
+
+import collections
 from typing import List, Optional, Iterable
 
 import errors
@@ -19,6 +21,7 @@ class StorageType(Enum):
     GLOBAL = 'global'
     LOCAL = 'local'
     ARG = 'arg'
+    STRUCT = 'struct'
     DECLARATION = 'decl'
     BUILTIN = 'builtin'
 
@@ -127,7 +130,7 @@ class ArrayType(SymbolType):
 
     @property
     def sizeof(self):
-        return TYPE_INT.sizeof
+        return self.elem_type.sizeof * (self.size or 0)
 
 
 TYPE_VOID = BasicType(TypeName.TB_VOID)
@@ -156,9 +159,11 @@ class Symbol(object):
         self.type = symbol_type
         self.storage = storage
         self.lineno = lineno
+        self.offset = None
 
     def __str__(self):
-        return f"{{{self.storage.value}}} {self.type} {self.name}"
+        storage = f"{self.storage.value}+{self.offset}" if self.storage not in (StorageType.BUILTIN, StorageType.DECLARATION) else str(self.storage.value)
+        return f"{{{storage}}} {self.type} {self.name}"
 
 
 class VariableSymbol(Symbol):
@@ -172,9 +177,6 @@ class FunctionSymbol(Symbol):
         self.ret_type = ret_type
         self.args = args
 
-    def __str__(self):
-        return f"{{{self.storage.value}}} {self.ret_type} {self.name}({', '.join(map(str, self.args))})"
-
 
 class StructSymbol(Symbol):
     def __init__(self, name: str, members: List[VariableSymbol], storage: StorageType, lineno: int):
@@ -184,8 +186,6 @@ class StructSymbol(Symbol):
     def get_member_symbol(self, member_name):
         return next((mem for mem in self.members if mem.name == member_name), None)
 
-    def __str__(self):
-        return f"{{{self.storage.value}}} struct {self.name} {{ {'; '.join(map(str, self.members))} }}"
 
 class BuiltinSymbol(FunctionSymbol):
     def __init__(self, name: str, ret_type: SymbolType, storage: StorageType, lineno: int, *args: VariableSymbol):
@@ -198,10 +198,11 @@ class SymbolTable(object):
         self._children = []  # type: List[SymbolTable]
         self.scope_name = scope_name
         self.storage = storage
-        self._symbols = {}
+        self._symbols = collections.OrderedDict()
         if outer:
             outer._children.append(self)
             self.scope_name = f"{outer.scope_name}.{scope_name}"
+        self.scope_offset = 0
 
     def get_symbol(self, symbol_name) -> Optional[Symbol]:
         return self._get_symbol_this(symbol_name) or self._get_symbol_outer(symbol_name)
@@ -217,7 +218,14 @@ class SymbolTable(object):
         if existing:
             raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name), symbol.lineno)
 
+        physical_storages = (StorageType.GLOBAL, StorageType.LOCAL, StorageType.ARG, StorageType.STRUCT)
+        last_symbol = next((s for s in reversed(self._symbols.values()) if s.storage in physical_storages), None)  # type: Symbol
         self._symbols[symbol.name] = symbol
+        if symbol.storage in physical_storages:
+            if last_symbol:
+                symbol.offset = last_symbol.offset + last_symbol.type.sizeof
+            else:
+                symbol.offset = 0
 
     def clear_self(self):
         self._symbols = {}
@@ -226,8 +234,12 @@ class SymbolTable(object):
         return 0 if self.outer is None else 1 + self.outer._depth()
 
     @property
-    def symbols(self) -> Iterable[Symbol]:
-        return list(self._symbols.values()) + list(sum((child.symbols for child in self._children), []))
+    def symbols(self) -> List[Symbol]:
+        return list(self._symbols.values()) + sum((child.symbols for child in self._children), [])
+
+    @property
+    def size(self) -> int:
+        return sum(symbol.type.sizeof for symbol in self._symbols.values())
 
     def __str__(self):
         tabs = "\t" * self._depth()

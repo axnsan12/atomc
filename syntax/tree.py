@@ -1,7 +1,8 @@
 import operator
 import collections
-from typing import Sequence, Union, Set
+from typing import Sequence, Union, Set, List
 from abc import ABCMeta, abstractmethod
+from runtime import instructions
 import symbols
 import errors
 import typecheck
@@ -75,6 +76,10 @@ class ASTNode(object, metaclass=ABCMeta):
 
     @abstractmethod
     def _on_bind_symbol_table(self):
+        raise NotImplementedError("Abstract method")
+
+    @abstractmethod
+    def compile(self, program: List['instructions.Instruction']):
         raise NotImplementedError("Abstract method")
 
 
@@ -169,7 +174,7 @@ class VariableAccessNode(ExpressionNode):
             raise errors.AtomCDomainError(f"undefined variable {self.symbol_name}", self.lineno)
 
         if not isinstance(var, symbols.VariableSymbol):
-            raise errors.AtomCTypeError(f"symbol {var} cannot be used as a value", self.lineno);
+            raise errors.AtomCTypeError(f"symbol {var} cannot be used as a value", self.lineno)
 
         return True
 
@@ -572,7 +577,7 @@ class StructDeclarationNode(DeclarationNode):
         return [struct_symbol]
 
     def _on_bind_symbol_table(self):
-        member_symbol_table = symbols.SymbolTable(f'struct-{self.struct_name}', symbols.StorageType.DECLARATION, self.symbol_table)
+        member_symbol_table = symbols.SymbolTable(f'struct-{self.struct_name}', symbols.StorageType.STRUCT, self.symbol_table)
         for member in self.member_declarations:
             member.bind_symbol_table(member_symbol_table)
 
@@ -684,6 +689,16 @@ class FunctionDeclarationNode(DeclarationNode):
         if self.return_type != symbols.TYPE_VOID and not any(isinstance(child, ReturnStatementNode) for child in self._children):
             raise errors.AtomCTypeError("missing return from non-void function", self.lineno)
         return True
+
+    def compile(self, program: List['instructions.Instruction']):
+        symbol = self.symbol_table.get_symbol(self.name)
+        symbol.offset = len(program)
+        locals_size = sum(symbol.type.sizeof for symbol in self.symbol_table.symbols if symbol.storage == symbols.StorageType.LOCAL)
+        args_size = sum(symbol.type.sizeof for symbol in self.symbol_table.symbols if symbol.storage == symbols.StorageType.ARG)
+        program.append(instructions.ENTER(locals_size, self.lineno))
+        self.function_body.compile(program)
+        program.append(instructions.LEAVE(self.lineno))
+        program.append(instructions.RETFP(args_size, self.return_type.sizeof, self.lineno))
 
 
 class StatementNode(ASTNode, metaclass=ABCMeta):
