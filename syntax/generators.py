@@ -64,13 +64,13 @@ def constant_literal(captures: parser.predicate_captures_t):
     ct_token = _get_one(captures, 'constant')
     ct_value = ct_token.value
     if ct_token.code == TokenType.CT_INT:
-        ct_type = symbols.PrimitiveType(symbols.TypeName.TB_INT)
+        ct_type = symbols.TYPE_INT
     elif ct_token.code == TokenType.CT_REAL:
-        ct_type = symbols.PrimitiveType(symbols.TypeName.TB_REAL)
+        ct_type = symbols.TYPE_REAL
     elif ct_token.code == TokenType.CT_CHAR:
-        ct_type = symbols.PrimitiveType(symbols.TypeName.TB_CHAR)
+        ct_type = symbols.TYPE_CHAR
     elif ct_token.code == TokenType.CT_STRING:
-        ct_type = symbols.ArrayType(symbols.PrimitiveType(symbols.TypeName.TB_CHAR), len(ct_value) + 1)
+        ct_type = symbols.ArrayType(symbols.TYPE_CHAR, len(ct_value) + 1)
     else:
         raise ValueError("Unknown constant literal type")
 

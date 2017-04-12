@@ -1,8 +1,9 @@
 import operator
 from abc import ABC, abstractmethod
-from typing import Union
+from typing import Union, List
 
 import builtin
+import symbols
 from runtime import machine, stack, errors
 
 class Instruction(ABC):
@@ -282,13 +283,17 @@ class ENTER(Instruction):
         vm.data_stack.alloc(self.size)  # alloc space for locals
 
 
-class LEAVE(Instruction):
-    def __init__(self, lineno: int):
-        super().__init__('LEAVE', lineno)
+class DROP(Instruction):
+    def __init__(self, size: int, lineno: int):
+        super().__init__('DROP', lineno)
+        self.size = size
 
     def execute(self, vm: 'machine.AtomCVM'):
-        vm.data_stack.free(vm.data_stack.sp - vm.call_stack.fp)  # free space allocated for locals
-        vm.call_stack.fp = vm.data_stack.popa()  # restore old frame pointer
+        if self.size > 0:
+            vm.data_stack.free(self.size)
+
+    def __str__(self):
+        return f"{self.mnemonic} {self.size}"
 
 
 class RETFP(Instruction):
@@ -301,12 +306,17 @@ class RETFP(Instruction):
         return f"{self.mnemonic} {self.arg_size}, {self.ret_size}"
 
     def execute(self, vm: 'machine.AtomCVM'):
-        ret = vm.data_stack.read_from(vm.data_stack.sp - self.ret_size, self.ret_size)  # get return value from top of stack
+        ret = None
+        if self.ret_size > 0:
+            ret = vm.data_stack.read_from(vm.data_stack.sp - self.ret_size, self.ret_size)  # get return value from top of stack
         vm.data_stack.free(vm.data_stack.sp - vm.call_stack.fp)  # reset call frame
         vm.call_stack.fp = vm.data_stack.popa()  # restore frame pointer
-        vm.data_stack.free(self.arg_size)  # free function arguments
-        vm.data_stack.alloc(self.ret_size)
-        vm.data_stack.write_at(vm.data_stack.sp - self.ret_size, ret)  # put return value on top of stack
+        if self.arg_size > 0:
+            vm.data_stack.free(self.arg_size)  # free function arguments
+        if self.ret_size > 0:
+            assert ret is not None
+            vm.data_stack.alloc(self.ret_size)
+            vm.data_stack.write_at(vm.data_stack.sp - self.ret_size, ret)  # put return value on top of stack
         vm.ip = vm.call_stack.ret()  # return control to caller
 
 
@@ -334,3 +344,17 @@ class CAST(Instruction):
         val = vm.data_stack.pop(self.from_type)
         vm.data_stack.push(self.to_type.python_type(val), self.to_type)
 
+
+data_types = {
+    symbols.TYPE_INT: stack.INT,
+    symbols.TYPE_REAL: stack.DOUBLE,
+    symbols.TYPE_CHAR: stack.CHAR,
+}
+
+def add_cast(from_type: symbols.SymbolType, to_type: symbols.SymbolType, lineno: int, program: List[Instruction]):
+    assert isinstance(from_type, symbols.PrimitiveType)
+    assert isinstance(to_type, symbols.PrimitiveType)
+    from_type = data_types[from_type]
+    to_type = data_types[to_type]
+    if from_type != to_type:
+        program.append(CAST(from_type, to_type, lineno))

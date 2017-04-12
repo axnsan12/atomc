@@ -43,8 +43,6 @@ class Predicate(ABC):
                 raise AssertionError("cannot generate a syntax node without capturing it")
 
         with Predicate.ConsumeAttemptManager(parser) as attempt:
-
-            # child_captures = parent_captures if not ast_node_generator else {}  # type: predicate_captures_t
             child_captures = {}  # type: predicate_captures_t
             tokens = self._on_consume_attempt(parser, child_captures)
             nodes = []

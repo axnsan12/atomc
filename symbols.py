@@ -48,13 +48,13 @@ class BasicType(SymbolType):
     @staticmethod
     def from_tokens(tokens: List[Token]) -> 'BasicType':
         if len(tokens) == 1 and tokens[0].code == TokenType.INT:
-            return PrimitiveType(TypeName.TB_INT)
+            return TYPE_INT
         if len(tokens) == 1 and tokens[0].code == TokenType.CHAR:
-            return PrimitiveType(TypeName.TB_CHAR)
+            return TYPE_CHAR
         if len(tokens) == 1 and tokens[0].code == TokenType.DOUBLE:
-            return PrimitiveType(TypeName.TB_REAL)
+            return TYPE_REAL
         if len(tokens) == 1 and tokens[0].code == TokenType.VOID:
-            return BasicType(TypeName.TB_VOID)
+            return TYPE_VOID
         if len(tokens) == 2 and tokens[0].code == TokenType.STRUCT and tokens[1].code == TokenType.ID:
             return StructType(tokens[1].value)
 
@@ -176,6 +176,7 @@ class FunctionSymbol(Symbol):
         super().__init__(name, ret_type, storage, lineno)
         self.ret_type = ret_type
         self.args = args
+        self.args_size = sum(arg.type.sizeof for arg in args)
 
 
 class StructSymbol(Symbol):
@@ -199,10 +200,12 @@ class SymbolTable(object):
         self.scope_name = scope_name
         self.storage = storage
         self._symbols = collections.OrderedDict()
+        self.scope_offset = 0
         if outer:
             outer._children.append(self)
             self.scope_name = f"{outer.scope_name}.{scope_name}"
-        self.scope_offset = 0
+            if outer.storage == storage == StorageType.LOCAL:
+                self.scope_offset = outer.scope_offset + outer.size
 
     def get_symbol(self, symbol_name) -> Optional[Symbol]:
         return self._get_symbol_this(symbol_name) or self._get_symbol_outer(symbol_name)
@@ -218,14 +221,17 @@ class SymbolTable(object):
         if existing:
             raise errors.AtomCDomainError("Attempt to redefine existing symbol {} in scope {}".format(existing, self.scope_name), symbol.lineno)
 
-        physical_storages = (StorageType.GLOBAL, StorageType.LOCAL, StorageType.ARG, StorageType.STRUCT)
-        last_symbol = next((s for s in reversed(self._symbols.values()) if s.storage in physical_storages), None)  # type: Symbol
+        physical_storages = (StorageType.GLOBAL, StorageType.LOCAL, StorageType.STRUCT)
+        if symbol.storage == StorageType.ARG:
+            last_arg = next((s for s in reversed(self._symbols.values()) if s.storage == StorageType.ARG), None)  # type: Symbol
+            symbol.offset = last_arg.offset - symbol.type.sizeof if last_arg else TYPE_INT.sizeof - symbol.type.sizeof
+        elif symbol.storage in physical_storages:
+            last_symbol = next((s for s in reversed(self._symbols.values()) if s.storage in physical_storages), None)  # type: Symbol
+            if last_symbol.storage != symbol.storage:
+                raise ValueError(f"Mixed storage types in symbol table - {symbol.storage} and {last_symbol.storage}")
+            symbol.offset = last_symbol.offset + last_symbol.type.sizeof if last_symbol else 0
+
         self._symbols[symbol.name] = symbol
-        if symbol.storage in physical_storages:
-            if last_symbol:
-                symbol.offset = last_symbol.offset + last_symbol.type.sizeof
-            else:
-                symbol.offset = 0
 
     def clear_self(self):
         self._symbols = {}

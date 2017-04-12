@@ -77,6 +77,8 @@ class DataStack(object):
         return self.pop(DataStack.DataType.CHAR)
 
     def alloc(self, size: int):
+        if size < 0:
+            raise errors.AtomCVMRuntimeError("negative size")
         if self._sp + size > self._size:
             raise errors.AtomCVMRuntimeError("out of stack memory")
         ret = self._sp
@@ -85,12 +87,16 @@ class DataStack(object):
         return ret
 
     def free(self, size: int):
+        if size < 0:
+            raise errors.AtomCVMRuntimeError("negative size")
         if self._sp - size < 0:
             raise errors.AtomCVMRuntimeError("stack buffer underflow")
         self._sp -= size
         self._stack[self._sp:self._sp+size] = _sentinel(0xDEADBEEF, size)
 
     def read_from(self, addr: int, size: int) -> bytes:
+        if size < 0:
+            raise errors.AtomCVMRuntimeError("negative size")
         if addr < 0 or size < 0 or addr + size >= self._size:
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         return bytes(self._stack[addr:addr+size])

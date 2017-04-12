@@ -2,7 +2,7 @@ import operator
 import collections
 from typing import Sequence, Union, Set, List
 from abc import ABCMeta, abstractmethod
-from runtime import instructions
+from runtime import instructions as asm
 import symbols
 import errors
 import typecheck
@@ -79,7 +79,7 @@ class ASTNode(object, metaclass=ABCMeta):
         raise NotImplementedError("Abstract method")
 
     @abstractmethod
-    def compile(self, program: List['instructions.Instruction']):
+    def compile(self, program: List['asm.Instruction']):
         raise NotImplementedError("Abstract method")
 
 
@@ -685,20 +685,22 @@ class FunctionDeclarationNode(DeclarationNode):
         self.function_body.bind_symbol_table(function_symbol_table)
         self.symbol_table.add_symbol(self.get_symbol())
 
+    @property
+    def symbol(self) -> symbols.FunctionSymbol:
+        symbol = self.symbol_table.get_symbol(self.name)
+        assert isinstance(symbol, symbols.FunctionSymbol)
+        return symbol
+
     def _on_validate(self):
         if self.return_type != symbols.TYPE_VOID and not any(isinstance(child, ReturnStatementNode) for child in self._children):
             raise errors.AtomCTypeError("missing return from non-void function", self.lineno)
         return True
 
-    def compile(self, program: List['instructions.Instruction']):
-        symbol = self.symbol_table.get_symbol(self.name)
-        symbol.offset = len(program)
+    def compile(self, program: List['asm.Instruction']):
+        self.symbol.offset = len(program)
         locals_size = sum(symbol.type.sizeof for symbol in self.symbol_table.symbols if symbol.storage == symbols.StorageType.LOCAL)
-        args_size = sum(symbol.type.sizeof for symbol in self.symbol_table.symbols if symbol.storage == symbols.StorageType.ARG)
-        program.append(instructions.ENTER(locals_size, self.lineno))
+        program.append(asm.ENTER(locals_size, self.lineno))
         self.function_body.compile(program)
-        program.append(instructions.LEAVE(self.lineno))
-        program.append(instructions.RETFP(args_size, self.return_type.sizeof, self.lineno))
 
 
 class StatementNode(ASTNode, metaclass=ABCMeta):
@@ -755,9 +757,20 @@ class WhileStatementNode(StatementNode):
     def _on_validate(self):
         condition_type = self.condition.type
         if not typecheck.is_numeric(condition_type):
-            raise  errors.AtomCTypeError(f"expression of type {condition_type} cannot be used as a logical test", self.condition.lineno)
+            raise errors.AtomCTypeError(f"expression of type {condition_type} cannot be used as a logical test", self.condition.lineno)
 
         return True
+
+    def compile(self, program: List['asm.Instruction']):
+        jmp_to_condition = asm.JMP(-1, self.lineno)
+        program.append(jmp_to_condition)
+        addr_body = len(program)
+        self.body.compile(program)
+        jmp_to_condition.addr = len(program)
+        self.condition.compile(program)
+        asm.add_cast(self.condition.type, symbols.TYPE_INT, self.lineno, program)
+        program.append(asm.JT(addr_body, self.lineno))
+        addr_break = len(program)
 
 
 class ForStatementNode(StatementNode):
@@ -793,6 +806,31 @@ class ForStatementNode(StatementNode):
             raise  errors.AtomCTypeError(f"expression of type {condition_type} cannot be used as a logical test", self.condition.lineno)
 
         return True
+
+    def compile(self, program: List['asm.Instruction']):
+        if self.initial is not None:
+            self.initial.compile(program)
+
+        jmp_to_condition = None
+        if self.condition is not None:
+            jmp_to_condition = asm.JMP(-1, self.lineno)
+            program.append(jmp_to_condition)
+
+        addr_body = len(program)
+        if self.increment is not None:
+            self.increment.compile(program)
+        self.body.compile(program)
+
+        if self.condition is not None:
+            assert jmp_to_condition is not None
+            jmp_to_condition.addr = len(program)
+            self.condition.compile(program)
+            asm.add_cast(self.condition.type, symbols.TYPE_INT, self.condition.lineno, program)
+            program.append(asm.JT(addr_body, self.condition.lineno))
+        else:
+            program.append(asm.JMP(addr_body, self.lineno))
+        addr_break = len(program)
+
 
 
 class BreakStatementNode(StatementNode):
@@ -839,6 +877,15 @@ class ReturnStatementNode(StatementNode):
 
         return True
 
+    def compile(self, program: List['asm.Instruction']):
+        func = self.current_function.symbol
+        if self.value is not None:
+            self.value.compile(program)
+            # the returned expression must be implicitly cast to the function's expected return type
+            asm.add_cast(self.value.type, func.ret_type, self.value.lineno, program)
+
+        program.append(asm.RETFP(func.args_size, func.ret_type.sizeof, self.lineno))
+
 
 class CompoundStatementNode(StatementNode):
     def __init__(self, lineno: int, instructions: Sequence[Union[StatementNode, VariableDeclarationNode]]):
@@ -862,6 +909,11 @@ class CompoundStatementNode(StatementNode):
     def _on_validate(self):
         return True
 
+    def compile(self, program: List['asm.Instruction']):
+        for stm in self.instructions:
+            if isinstance(stm, StatementNode):
+                stm.compile(program)
+
 
 class ExpressionStatementNode(StatementNode):
     def __init__(self, lineno: int, expression: ExpressionNode):
@@ -877,6 +929,11 @@ class ExpressionStatementNode(StatementNode):
     def _on_validate(self):
         return True
 
+    def compile(self, program: List['asm.Instruction']):
+        self.expression.compile(program)
+        # the expression will leave its result on the stack, but it is not used, so we must make sure to remove it
+        program.append(asm.DROP(self.expression.type.sizeof, self.lineno))
+
 
 class EmptyStatementNode(StatementNode):
     def __init__(self, lineno: int):
@@ -890,6 +947,9 @@ class EmptyStatementNode(StatementNode):
 
     def _on_validate(self):
         return True
+
+    def compile(self, program: List['asm.Instruction']):
+        pass
 
 
 class UnitNode(ASTNode):
@@ -906,3 +966,9 @@ class UnitNode(ASTNode):
 
     def _on_validate(self):
         return True
+
+    def compile(self, program: List['asm.Instruction']):
+        for decl in self.declarations:
+            if isinstance(decl, FunctionDeclarationNode):
+                decl.compile(program)
+
