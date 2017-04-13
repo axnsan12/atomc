@@ -5,11 +5,15 @@ import builtin
 import errors
 import lexer
 import symbols
-from syntax import parser, rules
+from syntax import parser, rules, tree
+from runtime import stack, machine, instructions
 
 
 def main():
+    only = ['9.c']
     for test in os.listdir('tests'):
+        if only and test not in only:
+            continue
         print('================== Analyzing file %s ==================' % test)
 
         with open(os.path.join('tests', test), 'rt') as infile:
@@ -42,6 +46,42 @@ def main():
 
                 unit_node.validate()
                 print("============== TYPE VALIDATION SUCCESSFUL ===============")
+                # alloc space for globals
+                mem = stack.DataStack(8192)
+                globals_size = sum(symbol.type.sizeof for symbol in global_symbol_table.symbols if symbol.storage == symbols.StorageType.GLOBAL)
+                global_mem = mem.alloc(globals_size)
+                mem.write_at(global_mem, b'\0' * globals_size)
+
+                # write string constants in global memory so they can be passed by address
+                for node in unit_node._children:
+                    if isinstance(node, tree.ConstantLiteralNode):
+                        if isinstance(node.constant_type, symbols.ArrayType):
+                            if node.constant_type.elem_type == symbols.TYPE_CHAR:
+                                assert node.constant_type.size == len(node.constant_value) + 1
+                                node.addr = mem.alloc(node.constant_type.size)
+                                mem.write_at(node.addr, node.constant_value.encode('utf8') + b'\0')
+
+                program = []
+                unit_node.compile(program)
+                main_func = global_symbol_table.get_symbol('main')
+                if not main_func or not isinstance(main_func, symbols.FunctionSymbol):
+                    raise errors.AtomCRuntimeError("main function missing or main is not a function", 0)
+
+                for addr, instr in enumerate(program):
+                    print(f"{addr}: {instr} {'<----- ENTRY POINT' if addr == main_func.offset else ''}")
+                print("============== COMPILATION SUCCESSFUL ===============")
+                print("Running program...")
+                builtin.stdout = ''
+
+                entry_point = len(program)
+                bootstrap = tree.FunctionCallExpressionNode(-1, 'main', [])
+                bootstrap.bind_symbol_table(global_symbol_table)
+                bootstrap.validate()
+                bootstrap.compile(program)
+                program.append(instructions.HLT(-1))
+                vm = machine.AtomCVM(mem, program, entry_point, debug=True)
+                vm.execute()
+                print(">>>>> PROGRAM HALTED; OUTPUT: \n" + builtin.stdout)
 
             except errors.AtomCError as e:
                 print(e)

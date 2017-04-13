@@ -274,11 +274,12 @@ def real_str(obj: Any) -> str:
 
 
 class SyntaxParser(object):
-    def __init__(self, tokens: Sequence[Token]):
+    def __init__(self, tokens: Sequence[Token], debug: bool=False):
         self.tokens = tokens
         self._pos = 0
         self.rules = {}  # type: Dict[str, Predicate]
         self.root_rule = None
+        self.debug = debug
 
     def tell(self) -> int:
         return self._pos
@@ -348,11 +349,12 @@ class SyntaxParser(object):
                 raise ValueError(f"Rule {rule_name} has no alternative that is not left recursive")
 
             if recursive_alternatives:
-                print(f"Automatically refactoring rule {rule_name} to remove left recursion.")
+                if self.debug:
+                    print(f"Automatically refactoring rule {rule_name} to remove left recursion.")
+
                 # transform rule of form A ::= A α1 | … | A αm | β1 | … | βn
                 # into A ::= β1 A’ | … | βn A’
                 # where A’ ::= α1 A’ | … | αm A’ | ε
-
                 prime_rule_name = rule_name + '1'
                 prime_alts = []  # α1 A’ ... αm A’
                 for old_alt in recursive_alternatives:  # type: SequencePredicate
@@ -367,7 +369,8 @@ class SyntaxParser(object):
                 new_rule = alt(*new_alts, capture_name=pred.get_capture_name(),
                                ast_node_generator=pred.get_node_generator(), syntax_error=pred.get_syntax_error())
 
-                print(f"{pred} was transformed into {new_rule}, where {prime_rule_name} is {prime_rule}")
+                if self.debug:
+                    print(f"{pred} was transformed into {new_rule}, where {prime_rule_name} is {prime_rule}")
                 pred = new_rule
                 self.add_named_rule(prime_rule_name, prime_rule)
 

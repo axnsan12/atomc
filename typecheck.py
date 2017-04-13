@@ -40,6 +40,17 @@ def is_numeric(symbol_type: symbols.SymbolType):
     return symbol_type in numeric_types
 
 
+def greatest_type(left_type: symbols.SymbolType, right_type: symbols.SymbolType):
+    if left_type == symbols.TYPE_REAL or right_type == symbols.TYPE_REAL:
+        return symbols.TYPE_REAL
+    elif left_type == symbols.TYPE_INT or right_type == symbols.TYPE_INT:
+        return symbols.TYPE_INT
+    elif left_type == symbols.TYPE_CHAR and right_type == symbols.TYPE_CHAR:
+        return symbols.TYPE_CHAR
+    else:
+        raise AssertionError("Expected numeric types")
+
+
 def check_cast_explicit(from_type: symbols.SymbolType, into_type: symbols.SymbolType) -> str:
     if from_type == symbols.TYPE_VOID:
         return f"expression of type void cannot be used as a value"

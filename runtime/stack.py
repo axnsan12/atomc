@@ -1,6 +1,6 @@
 import struct
 import itertools
-from typing import Tuple, Union
+from typing import Tuple, Union, Callable
 from runtime import errors
 
 
@@ -10,7 +10,25 @@ def _sentinel(val: int, length: int, val_size: int=4):
     yield from values[:length % len(values)]
 
 
+def print_debug(debug: bool):
+    def _decorator(func: Callable):
+        def wrapped(*args, **kwargs):
+            result = func(*args, **kwargs)
+            args = ' '.join(map(str, args[1:]))
+            ret = f'-> {result}' if result is not None else ''
+            if debug:
+                print(func.__name__, args, ret)
+
+            return result
+
+        return wrapped
+
+    return _decorator
+
+
 class DataStack(object):
+    _debug = True
+
     class DataType(object):
         def __init__(self, python_type: type, fmt: str, type_name: str, size: int, valid_range: Tuple[Union[int, float], Union[int, float]]):
             self.python_type = python_type
@@ -18,6 +36,9 @@ class DataStack(object):
             self.type_name = type_name
             self.size = size
             self.valid_range = valid_range
+
+        def __str__(self):
+            return self.type_name
     
     def __init__(self, size: int):
         self._stack = bytearray(size)
@@ -38,6 +59,7 @@ class DataStack(object):
         self._sp -= count
         return self._stack[self._sp:self._sp + count]
 
+    @print_debug(_debug)
     def push(self, value, value_type: DataType):
         if not isinstance(value, value_type.python_type):
             raise errors.AtomCVMRuntimeError("wrong value type for push")
@@ -46,6 +68,7 @@ class DataStack(object):
         except struct.error as e:
             raise errors.AtomCVMRuntimeError(f"push error: {str(e)}")
 
+    @print_debug(_debug)
     def pop(self, value_type: DataType):
         try:
             return value_type.python_type(struct.unpack(value_type.fmt, bytes(self._pop_bytes(value_type.size)))[0])
@@ -76,6 +99,7 @@ class DataStack(object):
     def popc(self) -> int:
         return self.pop(DataStack.DataType.CHAR)
 
+    @print_debug(_debug)
     def alloc(self, size: int):
         if size < 0:
             raise errors.AtomCVMRuntimeError("negative size")
@@ -86,6 +110,7 @@ class DataStack(object):
         self._sp += size
         return ret
 
+    @print_debug(_debug)
     def free(self, size: int):
         if size < 0:
             raise errors.AtomCVMRuntimeError("negative size")
@@ -94,6 +119,7 @@ class DataStack(object):
         self._sp -= size
         self._stack[self._sp:self._sp+size] = _sentinel(0xDEADBEEF, size)
 
+    @print_debug(_debug)
     def read_from(self, addr: int, size: int) -> bytes:
         if size < 0:
             raise errors.AtomCVMRuntimeError("negative size")
@@ -101,18 +127,20 @@ class DataStack(object):
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         return bytes(self._stack[addr:addr+size])
 
+    @print_debug(_debug)
     def write_at(self, addr: int, data: bytes):
         if addr < 0 or addr + len(data) >= self._size:
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         self._stack[addr:addr+len(data)] = data
 
+    @print_debug(_debug)
     def read_string(self, addr: int) -> str:
         if addr < 0:
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         end = addr
         while self._stack[end] != 0 and end < self._size:
             end += 1
-        if end < self._size:
+        if end >= self._size:
             raise errors.AtomCVMRuntimeError("stack overflow while reading string")
         return self._stack[addr:end].decode('utf8')
 
@@ -152,8 +180,7 @@ class CallStack(object):
     def ret(self) -> int:
         if not self.stack:
             raise errors.AtomCVMRuntimeError("unbalanced call stack")
-        ret_addr, fp = self.stack.pop()
-        return ret_addr
+        return self.stack.pop()
 
     def reset(self):
         self.stack = list()

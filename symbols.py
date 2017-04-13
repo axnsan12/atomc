@@ -145,7 +145,7 @@ def python_type(symbol_type: SymbolType):
     if symbol_type == TYPE_REAL:
         return float
     if symbol_type == TYPE_CHAR:
-        return str
+        return ord
     if isinstance(symbol_type, ArrayType):
         if symbol_type.elem_type == TYPE_CHAR:
             return str
@@ -159,7 +159,8 @@ class Symbol(object):
         self.type = symbol_type
         self.storage = storage
         self.lineno = lineno
-        self.offset = None
+        self.offset = None  # type: int
+        self.table = None  # type: SymbolTable
 
     def __str__(self):
         storage = f"{self.storage.value}+{self.offset}" if self.storage not in (StorageType.BUILTIN, StorageType.DECLARATION) else str(self.storage.value)
@@ -224,14 +225,15 @@ class SymbolTable(object):
         physical_storages = (StorageType.GLOBAL, StorageType.LOCAL, StorageType.STRUCT)
         if symbol.storage == StorageType.ARG:
             last_arg = next((s for s in reversed(self._symbols.values()) if s.storage == StorageType.ARG), None)  # type: Symbol
-            symbol.offset = last_arg.offset - symbol.type.sizeof if last_arg else TYPE_INT.sizeof - symbol.type.sizeof
+            symbol.offset = last_arg.offset - symbol.type.sizeof if last_arg else -TYPE_INT.sizeof - symbol.type.sizeof
         elif symbol.storage in physical_storages:
             last_symbol = next((s for s in reversed(self._symbols.values()) if s.storage in physical_storages), None)  # type: Symbol
-            if last_symbol.storage != symbol.storage:
+            if last_symbol and last_symbol.storage != symbol.storage:
                 raise ValueError(f"Mixed storage types in symbol table - {symbol.storage} and {last_symbol.storage}")
             symbol.offset = last_symbol.offset + last_symbol.type.sizeof if last_symbol else 0
 
         self._symbols[symbol.name] = symbol
+        symbol.table = self
 
     def clear_self(self):
         self._symbols = {}

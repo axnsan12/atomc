@@ -39,7 +39,7 @@ class AtomCVM(object):
                 raise errors.AtomCVMRuntimeError("Instruction pointer outside program memory")
             instr = self.program[self._ip]
             self._ip_jumped = False
-            self._print_debug(f"executing `{instr}`@{self.ip}")
+            self._print_debug(f"executing `{instr}`@{instr.lineno}")
             instr.execute(self)
             if not self._ip_jumped:
                 self._ip += 1

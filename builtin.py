@@ -24,7 +24,7 @@ def _arg_basic(name: str, arg_type: symbols.BasicType):
     return symbols.VariableSymbol(name, arg_type, symbols.StorageType.ARG, -1)
 
 def _builtin(name: str, return_type: symbols.SymbolType, *args: symbols.VariableSymbol):
-    return symbols.FunctionSymbol(name, return_type, symbols.StorageType.BUILTIN, -1, *args)
+    return symbols.BuiltinSymbol(name, return_type, symbols.StorageType.BUILTIN, -1, *args)
 
 
 put_s = _builtin('put_s', symbols.TYPE_VOID, _arg_array('s', symbols.TYPE_CHAR))
@@ -69,12 +69,19 @@ def exec_builtin(name: str, st: 'stack.DataStack'):
         data = _stdin()
         st.write_at(addr, data.encode('utf8') + b'\0')
         st.pusha(addr)
+        _stdout(data + '\n')
     elif name == 'get_i':
-        st.pushi(int(_stdin()))
+        val = int(_stdin())
+        st.pushi(val)
+        _stdout(str(val) + '\n')
     elif name == 'get_d':
-        st.pushd(float(_stdin()))
+        val = float(_stdin())
+        st.pushd(val)
+        _stdout(str(val) + '\n')
     elif name == 'get_c':
-        st.pushc(ord(_stdin()))
+        val = ord(_stdin())
+        st.pushc(val)
+        _stdout(str(val) + '\n')
     elif name == 'seconds':
         st.pushd(float(time.monotonic()))
     else:

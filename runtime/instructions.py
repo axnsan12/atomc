@@ -87,7 +87,7 @@ class LogicalInstruction(Instruction):
     def execute(self, vm: 'machine.AtomCVM'):
         b = vm.data_stack.pop(self.data_type)
         a = vm.data_stack.pop(self.data_type)
-        vm.data_stack.pushi(int(self.op(a, b)))
+        vm.data_stack.pushi(int(bool(self.op(a, b))))
 
 
 class AND(LogicalInstruction):
@@ -222,7 +222,7 @@ class LEAFP(Instruction):
         self.offset = offset
 
     def execute(self, vm: 'machine.AtomCVM'):
-        vm.data_stack.pusha(vm.call_stack.frame_pointer + self.offset)
+        vm.data_stack.pusha(vm.call_stack.fp + self.offset)
 
     def __str__(self):
         return f"{self.mnemonic} {self.offset}"
@@ -296,6 +296,34 @@ class DROP(Instruction):
         return f"{self.mnemonic} {self.size}"
 
 
+class OFFSET(Instruction):
+    def __init__(self, lineno: int):
+        super().__init__('OFFSET', lineno)
+
+    def execute(self, vm: 'machine.AtomCVM'):
+        offset = vm.data_stack.popi()
+        addr = vm.data_stack.popa()
+        vm.data_stack.pusha(addr + offset)
+
+
+class INSERT(Instruction):
+    def __init__(self, where: int, size: int, lineno: int):
+        super().__init__('INSERT', lineno)
+        self.where = where
+        self.size = size
+
+    def execute(self, vm: 'machine.AtomCVM'):
+        where = vm.data_stack.sp - self.where
+        saved = vm.data_stack.read_from(where, self.where)
+        data = saved[-self.size:]
+        vm.data_stack.alloc(self.size)
+        vm.data_stack.write_at(where, data)
+        vm.data_stack.write_at(where + self.size, saved)
+
+    def __str__(self):
+        return f"{self.mnemonic} {self.where}, {self.size}"
+
+
 class RETFP(Instruction):
     def __init__(self, arg_size: int, ret_size: int, lineno: int):
         super().__init__('RETFP', lineno)
@@ -344,6 +372,11 @@ class CAST(Instruction):
         val = vm.data_stack.pop(self.from_type)
         vm.data_stack.push(self.to_type.python_type(val), self.to_type)
 
+
+INT = stack.INT
+DOUBLE = stack.DOUBLE
+CHAR = stack.CHAR
+ADDR = stack.ADDR
 
 data_types = {
     symbols.TYPE_INT: stack.INT,
