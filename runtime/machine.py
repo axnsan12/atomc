@@ -1,6 +1,6 @@
 from typing import Sequence
 from runtime import stack, instructions, errors
-
+import errors as acerrors
 
 class AtomCVM(object):
     def __init__(self, memory: 'stack.DataStack', program: Sequence['instructions.Instruction'], entry_point, debug=False):
@@ -40,7 +40,10 @@ class AtomCVM(object):
             instr = self.program[self._ip]
             self._ip_jumped = False
             self._print_debug(f"executing `{instr}`@{instr.lineno}")
-            instr.execute(self)
+            try:
+                instr.execute(self)
+            except errors.AtomCVMRuntimeError as e:
+                raise acerrors.AtomCRuntimeError(str(e), instr.lineno)
             if not self._ip_jumped:
                 self._ip += 1
 
@@ -52,5 +55,3 @@ class AtomCVM(object):
         self._halted = self._ip_jumped = False
         self.data_stack = self.globals.copy()
         self.call_stack.reset()
-
-

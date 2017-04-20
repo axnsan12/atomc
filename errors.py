@@ -61,7 +61,7 @@ class AtomCRuntimeError(AtomCError):
         self.lineno = lineno
 
     def __str__(self):
-        return f"Runtime caused by code at line {self.lineno}: {self.error_message}"
+        return f"Runtime error caused by code at line {self.lineno}: {self.error_message}"
 
     def __repr__(self):
         return "%s(%r)" % (self.__class__, self.__dict__)

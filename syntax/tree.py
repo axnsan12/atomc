@@ -154,6 +154,7 @@ class ConstantLiteralNode(ExpressionNode):
             assert isinstance(self.constant_type, symbols.ArrayType), "expression cannot be used as lvalue"
             program.append(asm.PUSHCT(self.addr, asm.ADDR, self.lineno))
         else:
+            assert not isinstance(self.constant_type, symbols.ArrayType), "expression cannot be used as rvalue"
             program.append(asm.PUSHCT(self.calculate_const(), asm.data_types[self.constant_type], self.lineno))
 
 
@@ -508,11 +509,15 @@ class AssignmentExpressionNode(BinaryExpressionNode):
 
     def compile(self, program: List['asm.Instruction'], as_rval: bool=True):
         assert as_rval, "expression cannot be used an lvalue"
-        right_size = self.operand_right.type.sizeof
-        self.operand_left.compile(program, as_rval=False)
-        self.operand_right.compile(program)
-        program.append(asm.INSERT(asm.ADDR.size + right_size, right_size, self.lineno))
-        program.append(asm.STORE(right_size, self.lineno))
+        left_type = self.operand_left.type
+        right_type = self.operand_right.type
+        # TODO: array copy, pointers?
+        if not isinstance(left_type, symbols.ArrayType) and not isinstance(right_type, symbols.ArrayType):
+            right_size = self.operand_right.type.sizeof
+            self.operand_left.compile(program, as_rval=False)
+            self.operand_right.compile(program)
+            program.append(asm.INSERT(asm.ADDR.size + right_size, right_size, self.lineno))
+            program.append(asm.STORE(right_size, self.lineno))
 
 
 class BinaryLogicalExpressionNode(BinaryExpressionNode):
@@ -1076,6 +1081,16 @@ class UnitNode(ASTNode):
         return ' '.join(map(str, self.declarations))
 
     def _on_validate(self):
+        main_func = self.symbol_table.get_symbol('main')
+        if not main_func:
+            raise errors.AtomCDomainError("undefined symbol `main`", 0)
+
+        if not isinstance(main_func, symbols.FunctionSymbol):
+            raise errors.AtomCTypeError("`main` is not a function", main_func.lineno)
+
+        if len(main_func.args) != 0 or main_func.ret_type != symbols.TYPE_VOID:
+            raise errors.AtomCTypeError("`main` should be a function taking no arguments and returning void", main_func.lineno)
+
         return True
 
     def compile(self, program: List['asm.Instruction']):

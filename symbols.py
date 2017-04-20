@@ -130,7 +130,10 @@ class ArrayType(SymbolType):
 
     @property
     def sizeof(self):
-        return self.elem_type.sizeof * (self.size or 0)
+        if self.size is None:
+            return TYPE_INT.sizeof
+        else:
+            return self.elem_type.sizeof * self.size
 
 
 TYPE_VOID = BasicType(TypeName.TB_VOID)

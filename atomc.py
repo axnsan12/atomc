@@ -1,93 +1,76 @@
-import os
+import argparse
+import io
+import timeit
 
-import itertools
+import acc
 import builtin
 import errors
 import lexer
 import symbols
-from syntax import parser, rules, tree
-from runtime import stack, machine, instructions
+from runtime import stack, machine
+from syntax import rules, parser
 
 
 def main():
-    only = ['9.c']
-    for test in os.listdir('tests'):
-        if only and test not in only:
-            continue
-        print('================== Analyzing file %s ==================' % test)
+    argp = argparse.ArgumentParser()
+    argp.add_argument('file', help='source code file')
+    argp.add_argument('-q', '--quiet', help="Supress program output", action='store_true')
+    argp.add_argument('--times', help='execute program TIMES times and print the total execution time', type=int, default=1)
+    args = argp.parse_args()
+    infile = args.file
 
-        with open(os.path.join('tests', test), 'rt') as infile:
-            try:
-                tokens = lexer.get_tokens(infile)
-                for ln, ltokens in itertools.groupby(tokens, lambda t: t.line):
-                    print("Line %d: " % ln + ' '.join(map(str, ltokens)))
+    with open(infile, 'rt') as f:
+        code = f.read()
+        code = io.StringIO(code)
 
-                syntax_parser = parser.SyntaxParser(tokens)
+    try:
+        tokens = lexer.get_tokens(code)
+        syntax_parser = parser.SyntaxParser(tokens)
 
-                for rule_name, pred in rules.syntax_rules.items():
-                    syntax_parser.add_named_rule(rule_name, pred)
+        for rule_name, pred in rules.syntax_rules.items():
+            syntax_parser.add_named_rule(rule_name, pred)
+        syntax_parser.set_root_rule('unit', rules.root_rule)
 
-                syntax_parser.set_root_rule('unit', rules.root_rule)
+        unit_node = syntax_parser.get_syntax_tree()
 
-                unit_node = syntax_parser.get_syntax_tree()
-                if unit_node is not None:
-                    print("===================== PARSED SYNTAX =====================")
-                    print(unit_node)
-                else:
-                    print("SYNTAX PARSE FAILED")
+        builtin_symbol_table = symbols.SymbolTable('builtin', symbols.StorageType.BUILTIN, None)
+        for f in builtin.all_builtins:
+            builtin_symbol_table.add_symbol(f)
 
-                builtin_symbol_table = symbols.SymbolTable('builtin', symbols.StorageType.BUILTIN, None)
-                for f in builtin.all_builtins:
-                    builtin_symbol_table.add_symbol(f)
+        global_symbol_table = symbols.SymbolTable('global', symbols.StorageType.GLOBAL, builtin_symbol_table)
+        unit_node.bind_symbol_table(global_symbol_table)
+        unit_node.validate()
 
-                global_symbol_table = symbols.SymbolTable('global', symbols.StorageType.GLOBAL, builtin_symbol_table)
-                unit_node.bind_symbol_table(global_symbol_table)
-                print(builtin_symbol_table)
+        mem = stack.DataStack(8192)
+        program, entry_point = acc.atomc_compile_unit(unit_node, global_symbol_table, mem)
 
-                unit_node.validate()
-                print("============== TYPE VALIDATION SUCCESSFUL ===============")
-                # alloc space for globals
-                mem = stack.DataStack(8192)
-                globals_size = sum(symbol.type.sizeof for symbol in global_symbol_table.symbols if symbol.storage == symbols.StorageType.GLOBAL)
-                global_mem = mem.alloc(globals_size)
-                mem.write_at(global_mem, b'\0' * globals_size)
-
-                # write string constants in global memory so they can be passed by address
-                for node in unit_node._children:
-                    if isinstance(node, tree.ConstantLiteralNode):
-                        if isinstance(node.constant_type, symbols.ArrayType):
-                            if node.constant_type.elem_type == symbols.TYPE_CHAR:
-                                assert node.constant_type.size == len(node.constant_value) + 1
-                                node.addr = mem.alloc(node.constant_type.size)
-                                mem.write_at(node.addr, node.constant_value.encode('utf8') + b'\0')
-
-                program = []
-                unit_node.compile(program)
-                main_func = global_symbol_table.get_symbol('main')
-                if not main_func or not isinstance(main_func, symbols.FunctionSymbol):
-                    raise errors.AtomCRuntimeError("main function missing or main is not a function", 0)
-
-                for addr, instr in enumerate(program):
-                    print(f"{addr}: {instr} {'<----- ENTRY POINT' if addr == main_func.offset else ''}")
-                print("============== COMPILATION SUCCESSFUL ===============")
-                print("Running program...")
-                builtin.stdout = ''
-
-                entry_point = len(program)
-                bootstrap = tree.FunctionCallExpressionNode(-1, 'main', [])
-                bootstrap.bind_symbol_table(global_symbol_table)
-                bootstrap.validate()
-                bootstrap.compile(program)
-                program.append(instructions.HLT(-1))
-                vm = machine.AtomCVM(mem, program, entry_point, debug=True)
-                vm.execute()
-                print(">>>>> PROGRAM HALTED; OUTPUT: \n" + builtin.stdout)
-
-            except errors.AtomCError as e:
-                print(e)
-                return
-
-        print('=========================================================')
+        builtin.stdout = ''
+        builtin.interactive = True
+        if args.quiet:
+            builtin._stdout = lambda *_: None
+        vm = machine.AtomCVM(mem, program, entry_point, debug=False)
+        scope = globals()
+        scope['vm'] = vm
+        if args.quiet:
+            run_code = "vm.execute(); vm.reset();"
+        else:
+            run_code = "vm.execute(); print(); vm.reset();"
+        etime = timeit.timeit(run_code, globals=scope, number=args.times)
+        etime = round(etime, 3)
+        if not args.quiet:
+            print("-------------------------------------")
+        if args.times > 1:
+            print(f"Time to execute program {args.times} times: {etime}")
+        else:
+            print(f"Program execution finished in {etime} seconds")
+        return 0
+    except errors.AtomCRuntimeError as e:
+        print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        print(e)
+        return 1
+    except errors.AtomCError as e:
+        print(e)
+        return 1
 
 
 if __name__ == '__main__':

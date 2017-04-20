@@ -247,9 +247,10 @@ class Tokenizer(object):
         :return:
         """
         if not self.checked:
-            errors = self.check()
-            print('\n'.join(errors))
-            assert not errors
+            sm_errs = self.check()
+            if sm_errs:
+                print('\n'.join(sm_errs))
+            assert not sm_errs
         if self.error:
             raise ValueError("Cannot use tokenizer after it entered error state.")
 

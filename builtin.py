@@ -45,43 +45,62 @@ all_builtins = [put_s, get_s, put_i, get_i, put_d, get_d, put_c, get_c, seconds]
 
 
 stdout = ''
+interactive = False
 
 def _stdout(msg):
-    # sys.stdout.write(str(msg))
-    global stdout
-    stdout += str(msg)
+    if interactive:
+        sys.stdout.write(str(msg))
+    else:
+        global stdout
+        stdout += str(msg)
 
 def _stdin():
-    return input()
+    val = input()
+    if not interactive:
+        _stdout(val + '\n')
+
+    return val
 
 
 def exec_builtin(name: str, st: 'stack.DataStack'):
     if name == 'put_s':
-        _stdout(st.read_string(st.popa()))
+        try:
+            _stdout(st.read_string(st.popa()))
+        except (ValueError, UnicodeDecodeError):
+            raise errors.AtomCVMRuntimeError(f"invalid string")
     elif name == 'put_i':
         _stdout(st.popi())
     elif name == 'put_d':
         _stdout(st.popd())
     elif name == 'put_c':
-        _stdout(chr(st.popc()))
+        val = st.popc()
+        try:
+            _stdout(chr(val))
+        except ValueError:
+            raise errors.AtomCVMRuntimeError(f"invalid character codepoint {val}")
     elif name == 'get_s':
         addr = st.popa()
         data = _stdin()
         st.write_at(addr, data.encode('utf8') + b'\0')
         st.pusha(addr)
-        _stdout(data + '\n')
     elif name == 'get_i':
-        val = int(_stdin())
+        try:
+            val = int(_stdin())
+        except ValueError:
+            raise errors.AtomCVMRuntimeError("expected integer value")
         st.pushi(val)
-        _stdout(str(val) + '\n')
     elif name == 'get_d':
-        val = float(_stdin())
+        try:
+            val = float(_stdin())
+        except ValueError:
+            raise errors.AtomCVMRuntimeError("expected a real number")
         st.pushd(val)
-        _stdout(str(val) + '\n')
     elif name == 'get_c':
-        val = ord(_stdin())
+        try:
+            val = ord(_stdin())
+        except ValueError:
+            raise errors.AtomCVMRuntimeError("single character expected")
         st.pushc(val)
-        _stdout(str(val) + '\n')
     elif name == 'seconds':
         st.pushd(float(time.monotonic()))
     else:

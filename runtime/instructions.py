@@ -55,9 +55,12 @@ class ArithmeticInstruction(Instruction):
         return val
 
     def execute(self, vm: 'machine.AtomCVM'):
-        b = vm.data_stack.pop(self.data_type)
-        a = vm.data_stack.pop(self.data_type)
-        vm.data_stack.push(self._cast_number(self.op(a, b)), self.data_type)
+        try:
+            b = vm.data_stack.pop(self.data_type)
+            a = vm.data_stack.pop(self.data_type)
+            vm.data_stack.push(self._cast_number(self.op(a, b)), self.data_type)
+        except ArithmeticError as e:
+            raise errors.AtomCVMRuntimeError(str(e))
 
 
 class ADD(ArithmeticInstruction):

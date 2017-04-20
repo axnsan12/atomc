@@ -10,25 +10,22 @@ def _sentinel(val: int, length: int, val_size: int=4):
     yield from values[:length % len(values)]
 
 
-def print_debug(debug: bool):
-    def _decorator(func: Callable):
-        def wrapped(*args, **kwargs):
-            result = func(*args, **kwargs)
-            args = ' '.join(map(str, args[1:]))
+def print_debug(func: Callable):
+    def wrapped(*args, **kwargs):
+        result = func(*args, **kwargs)
+        st = args[0]  # type: DataStack
+
+        if st.debug:
+            args_print = ' '.join(map(str, args[1:]))
             ret = f'-> {result}' if result is not None else ''
-            if debug:
-                print(func.__name__, args, ret)
+            print(func.__name__, args_print, ret)
 
-            return result
+        return result
 
-        return wrapped
-
-    return _decorator
+    return wrapped
 
 
 class DataStack(object):
-    _debug = True
-
     class DataType(object):
         def __init__(self, python_type: type, fmt: str, type_name: str, size: int, valid_range: Tuple[Union[int, float], Union[int, float]]):
             self.python_type = python_type
@@ -40,10 +37,11 @@ class DataStack(object):
         def __str__(self):
             return self.type_name
     
-    def __init__(self, size: int):
+    def __init__(self, size: int, debug=False):
         self._stack = bytearray(size)
         self._size = size
         self._sp = 0
+        self.debug = debug
 
     def _push_bytes(self, data: bytes):
         if self._sp + len(data) > self._size:
@@ -59,7 +57,7 @@ class DataStack(object):
         self._sp -= count
         return self._stack[self._sp:self._sp + count]
 
-    @print_debug(_debug)
+    @print_debug
     def push(self, value, value_type: DataType):
         if not isinstance(value, value_type.python_type):
             raise errors.AtomCVMRuntimeError("wrong value type for push")
@@ -68,7 +66,7 @@ class DataStack(object):
         except struct.error as e:
             raise errors.AtomCVMRuntimeError(f"push error: {str(e)}")
 
-    @print_debug(_debug)
+    @print_debug
     def pop(self, value_type: DataType):
         try:
             return value_type.python_type(struct.unpack(value_type.fmt, bytes(self._pop_bytes(value_type.size)))[0])
@@ -99,7 +97,7 @@ class DataStack(object):
     def popc(self) -> int:
         return self.pop(DataStack.DataType.CHAR)
 
-    @print_debug(_debug)
+    @print_debug
     def alloc(self, size: int):
         if size < 0:
             raise errors.AtomCVMRuntimeError("negative size")
@@ -110,7 +108,7 @@ class DataStack(object):
         self._sp += size
         return ret
 
-    @print_debug(_debug)
+    @print_debug
     def free(self, size: int):
         if size < 0:
             raise errors.AtomCVMRuntimeError("negative size")
@@ -119,7 +117,7 @@ class DataStack(object):
         self._sp -= size
         self._stack[self._sp:self._sp+size] = _sentinel(0xDEADBEEF, size)
 
-    @print_debug(_debug)
+    @print_debug
     def read_from(self, addr: int, size: int) -> bytes:
         if size < 0:
             raise errors.AtomCVMRuntimeError("negative size")
@@ -127,13 +125,13 @@ class DataStack(object):
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         return bytes(self._stack[addr:addr+size])
 
-    @print_debug(_debug)
+    @print_debug
     def write_at(self, addr: int, data: bytes):
         if addr < 0 or addr + len(data) >= self._size:
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
         self._stack[addr:addr+len(data)] = data
 
-    @print_debug(_debug)
+    @print_debug
     def read_string(self, addr: int) -> str:
         if addr < 0:
             raise errors.AtomCVMRuntimeError("out-of-bounds memory access")
@@ -155,7 +153,7 @@ class DataStack(object):
         return new_stack
 
 
-CHAR = DataStack.DataType.CHAR = DataStack.DataType(int, '=b', 'char', 1, (-2**7, 2**7 - 1))
+CHAR = DataStack.DataType.CHAR = DataStack.DataType(int, '=B', 'char', 1, (-2**7, 2**7 - 1))
 INT = DataStack.DataType.INT = DataStack.DataType(int, '=i', 'int', 4, (-2**31, 2**31 - 1))
 DOUBLE = DataStack.DataType.DOUBLE = DataStack.DataType(float, '=d', 'double', 8, (float('-inf'), float('inf')))
 ADDR = DataStack.DataType.ADDR = DataStack.DataType(int, '=i', 'int', 4, (-2**31, 2**31 - 1))
@@ -163,7 +161,7 @@ ADDR = DataStack.DataType.ADDR = DataStack.DataType(int, '=i', 'int', 4, (-2**31
 
 class CallStack(object):
     def __init__(self):
-        self.stack = list()
+        self.stack = []
         self._fp = -1
 
     def call(self, ret_addr: int):
@@ -183,4 +181,4 @@ class CallStack(object):
         return self.stack.pop()
 
     def reset(self):
-        self.stack = list()
+        self.stack = []

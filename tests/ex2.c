@@ -1,5 +1,7 @@
-int main() {
+void main() {
     char c;
-    // printf("%c, %d", c, 108);
-    return 0;
+    put_c(c);
+    put_s(", ");
+    put_i(108);
+    return;
 }
